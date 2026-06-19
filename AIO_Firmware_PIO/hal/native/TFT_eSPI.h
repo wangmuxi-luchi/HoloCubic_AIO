@@ -35,7 +35,7 @@ public:
     void print(int n) { (void)n; }
     void println(const char *s) { (void)s; }
     void println(int n) { (void)n; }
-    void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t *data) { (void)x; (void)y; (void)w; (void)h; (void)data; }
+    void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t *data);
     void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *data) { (void)x; (void)y; (void)w; (void)h; (void)data; }
     void pushPixels(const void *data, uint32_t len) { (void)data; (void)len; }
     bool getSwapBytes(void) { return false; }
