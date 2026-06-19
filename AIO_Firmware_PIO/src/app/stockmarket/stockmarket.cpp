@@ -25,27 +25,22 @@ static void write_config(const B_Config *cfg)
 
 static void read_config(B_Config *cfg)
 {
-    // 如果有需要持久化配置文件 可以调用此函数将数据存在flash中
-    // 配置文件名最好以APP名为开头 以".cfg"结尾，以免多个APP读取混乱
     char info[128] = {0};
     uint16_t size = g_flashCfg.readFile(B_CONFIG_PATH, (uint8_t *)info);
     info[size] = 0;
     if (size == 0)
     {
-        // 默认值
-        cfg->stock_id = "sh601126";  // 股票代码
-        cfg->updataInterval = 10000; // 更新的时间间隔10000(10s)
+        cfg->stock_id = "sh601126";
+        cfg->updataInterval = 10000;
         write_config(cfg);
     }
     else
     {
-        // 解析数据
         char *param[2] = {0};
         analyseParam(info, 2, param);
         cfg->stock_id = param[0];
         cfg->updataInterval = atol(param[1]);
     }
-    //    cfg->stock_id = "sh601126";  // 股票代码
 }
 
 struct StockmarketAppRunData
@@ -69,11 +64,14 @@ static MyHttpResult http_request(String uid = "sh601126")
     String url = "http://hq.sinajs.cn/list=" + uid;
     MyHttpResult result;
 
+    Serial.printf("[STOCK] requesting: %s\n", url.c_str());
+
     HTTPClient httpClient;
     httpClient.setTimeout(1000);
     bool status = httpClient.begin(url);
     if (status == false)
     {
+        Serial.println("[STOCK] httpClient.begin() failed");
         result.httpCode = -1;
         return result;
     }
@@ -82,6 +80,9 @@ static MyHttpResult http_request(String uid = "sh601126")
     int httpCode = httpClient.GET();
     String httpResponse = httpClient.getString();
     httpClient.end();
+
+    Serial.printf("[STOCK] httpCode=%d, response len=%d\n", httpCode, httpResponse.length());
+
     result.httpCode = httpCode;
     result.httpResponse = httpResponse;
     return result;
@@ -92,6 +93,8 @@ static int stockmarket_init(AppController *sys)
     stockmarket_gui_init();
     // 获取配置信息
     read_config(&cfg_data);
+    Serial.printf("[STOCK] init: stock_id=%s, interval=%lu\n", 
+                  cfg_data.stock_id.c_str(), cfg_data.updataInterval);
     // 初始化运行时参数
     run_data = (StockmarketAppRunData *)malloc(sizeof(StockmarketAppRunData));
     run_data->stockdata.OpenQuo = 0;
@@ -160,7 +163,7 @@ static void update_stock_data()
     MyHttpResult result = http_request(cfg_data.stock_id);
     if (-1 == result.httpCode)
     {
-        Serial.println("[HTTP] Http request failed.");
+        Serial.println("[STOCK] Http request failed.");
         return;
     }
     if (result.httpCode > 0)
@@ -168,8 +171,21 @@ static void update_stock_data()
         if (result.httpCode == HTTP_CODE_OK || result.httpCode == HTTP_CODE_MOVED_PERMANENTLY)
         {
             String payload = result.httpResponse;
-            Serial.println("[HTTP] OK");
+            Serial.println("[STOCK] OK");
             Serial.println(payload);
+
+            if (payload.length() == 0)
+            {
+                Serial.println("[STOCK] Empty response, skip parse");
+                return;
+            }
+
+            int stockNameStart = payload.indexOf('"') + 1;
+            int stockNameEnd = payload.indexOf(',');
+            String Stockname = payload.substring(stockNameStart, stockNameEnd);
+
+            Serial.printf("[STOCK] name=%s\n", Stockname.c_str());
+
             int startIndex_1 = payload.indexOf(',') + 1;
             int endIndex_1 = payload.indexOf(',', startIndex_1);
             int startIndex_2 = payload.indexOf(',', endIndex_1) + 1;
@@ -180,9 +196,10 @@ static void update_stock_data()
             int endIndex_4 = payload.indexOf(',', startIndex_4);
             int startIndex_5 = payload.indexOf(',', endIndex_4) + 1;
             int endIndex_5 = payload.indexOf(',', startIndex_5);
-            String Stockname = payload.substring(payload.indexOf('"') + 1, payload.indexOf(',')); // 股票名称
             memset(run_data->stockdata.name, '\0', 9);
-            for (int i = 0; i < 8; i++)
+            int nameLen = Stockname.length();
+            if (nameLen > 8) nameLen = 8;
+            for (int i = 0; i < nameLen; i++)
                 run_data->stockdata.name[i] = Stockname.charAt(i);
             run_data->stockdata.name[8] = '\0';
             run_data->stockdata.OpenQuo = payload.substring(startIndex_1, endIndex_1).toFloat();  // 今日开盘价
@@ -214,6 +231,12 @@ static void update_stock_data()
             int endIndex_9 = payload.indexOf(',', startIndex_9);
             run_data->stockdata.tradvolume = payload.substring(startIndex_8, endIndex_8).toFloat(); // 成交量
             run_data->stockdata.turnover = payload.substring(startIndex_9, endIndex_9).toFloat();   // 成交额
+
+            Serial.printf("[STOCK] parsed: Open=%.2f Close=%.2f Now=%.2f High=%.2f Low=%.2f Chg=%.2f%% Vol=%.0f\n",
+                          run_data->stockdata.OpenQuo, run_data->stockdata.CloseQuo,
+                          run_data->stockdata.NowQuo, run_data->stockdata.MaxQuo,
+                          run_data->stockdata.MinQuo, run_data->stockdata.ChgPercent,
+                          run_data->stockdata.tradvolume);
             // Serial.printf("chg= %.2f\r\n",run_data->stockdata.ChgValue);
             // Serial.printf("chgpercent= %.2f%%\r\n",run_data->stockdata.ChgPercent);
         }

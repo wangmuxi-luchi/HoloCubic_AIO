@@ -2,6 +2,7 @@
 #include "hal_native.h"
 #include <cstdio>
 #include <cstring>
+#include "SPIFFS.h"
 
 // ==================== Display ====================
 void Display::init(uint8_t rotation, uint8_t backLight)
@@ -91,6 +92,18 @@ void SdCard::init()
 {
 }
 
+void SdCard::listDir(const char *dirname, uint8_t levels)
+{
+    (void)dirname;
+    (void)levels;
+}
+
+File_Info *SdCard::listDir(const char *dirname)
+{
+    (void)dirname;
+    return nullptr;
+}
+
 // ==================== IMU ====================
 IMU::IMU()
 {
@@ -145,40 +158,58 @@ FlashFS::~FlashFS()
 
 uint16_t FlashFS::readFile(const char *path, uint8_t *info)
 {
-    (void)path;
-    if (info) {
-        info[0] = '\0';
+    if (!info) return 0;
+    File file = SPIFFS.open(path);
+    if (!file || file.isDirectory())
+    {
+        Serial.printf("[FlashFS] readFile(%s) failed\n", path);
+        return 0;
     }
-    return 0;
+    uint16_t ret = 0;
+    while (file.available())
+    {
+        ret += file.read(info + ret, 15);
+    }
+    file.close();
+    Serial.printf("[FlashFS] readFile(%s) OK, %d bytes\n", path, ret);
+    return ret;
 }
 
 void FlashFS::writeFile(const char *path, const char *message)
 {
-    (void)path;
-    (void)message;
-}
-
-void FlashFS::listDir(const char *dirname, uint8_t levels)
-{
-    (void)dirname;
-    (void)levels;
+    File file = SPIFFS.open(path, FILE_WRITE);
+    if (!file)
+    {
+        Serial.printf("[FlashFS] writeFile(%s) failed\n", path);
+        return;
+    }
+    file.write((const uint8_t *)message, strlen(message));
+    file.close();
 }
 
 void FlashFS::appendFile(const char *path, const char *message)
 {
-    (void)path;
-    (void)message;
+    File file = SPIFFS.open(path, FILE_APPEND);
+    if (!file)
+    {
+        Serial.printf("[FlashFS] appendFile(%s) failed\n", path);
+        return;
+    }
+    file.write((const uint8_t *)message, strlen(message));
+    file.close();
 }
 
 void FlashFS::renameFile(const char *src, const char *dst)
 {
-    (void)src;
-    (void)dst;
+    char srcBuf[512], dstBuf[512];
+    snprintf(srcBuf, sizeof(srcBuf), "sim_data/spiffs%s", src);
+    snprintf(dstBuf, sizeof(dstBuf), "sim_data/spiffs%s", dst);
+    ::rename(srcBuf, dstBuf);
 }
 
 void FlashFS::deleteFile(const char *path)
 {
-    (void)path;
+    SPIFFS.remove(path);
 }
 
 // ==================== Network ====================
@@ -199,7 +230,7 @@ boolean Network::start_conn_wifi(const char *ssid, const char *password)
 
 boolean Network::end_conn_wifi(void)
 {
-    return true;
+    return CONN_SUCC;
 }
 
 boolean Network::close_wifi(void)
@@ -228,9 +259,22 @@ void rgb_stop(void)
 
 bool analyseParam(char *info, int argc, char **argv)
 {
-    (void)info;
-    (void)argc;
-    (void)argv;
+    int cnt; // 记录解析到第几个参数
+    for (cnt = 0; cnt < argc; ++cnt)
+    {
+        argv[cnt] = info;
+        while (*info != '\n' && *info != '\0')
+        {
+            ++info;
+        }
+        // 兼容 Windows 文本模式产生的 \r\n 换行符
+        if (info > argv[cnt] && *(info - 1) == '\r')
+        {
+            *(info - 1) = 0;
+        }
+        *info = 0;
+        ++info;
+    }
     return true;
 }
 
@@ -269,4 +313,47 @@ extern "C" void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuf
     *ppxTimerTaskTCBBuffer = &xTimerTaskTCB;
     *ppxTimerTaskStackBuffer = uxTimerTaskStack;
     *pulTimerTaskStackSize = configTIMER_TASK_STACK_DEPTH;
+}
+
+// ==================== TJpg_Decoder 桩 ====================
+#include "TJpg_Decoder.h"
+TJpg_Decoder TJpgDec;
+
+// ==================== esp_system 桩 ====================
+#include "esp_system.h"
+#include <cstdlib>
+
+extern "C" void esp_restart(void)
+{
+    exit(0);
+}
+
+extern "C" uint32_t esp_random(void)
+{
+    return (uint32_t)rand();
+}
+
+extern "C" uint32_t esp_get_free_heap_size(void)
+{
+    return 64 * 1024 * 1024;
+}
+
+extern "C" uint32_t esp_get_minimum_free_heap_size(void)
+{
+    return 32 * 1024 * 1024;
+}
+
+// ==================== heap_caps 桩 ====================
+extern "C" void *heap_caps_malloc(size_t size, uint32_t caps)
+{
+    (void)caps;
+    return malloc(size);
+}
+
+// ==================== SD 卡桩 ====================
+#include "SD.h"
+
+void release_file_info(File_Info *info)
+{
+    (void)info;
 }

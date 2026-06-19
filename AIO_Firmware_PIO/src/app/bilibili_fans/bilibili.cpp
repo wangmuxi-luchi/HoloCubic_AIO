@@ -67,20 +67,31 @@ struct MyHttpResult
 static B_Config cfg_data;
 static BilibiliAppRunData *run_data = NULL;
 
-static MyHttpResult http_request(String uid = "344470052")
+static MyHttpResult http_request(String uid = "1666257451")
 {
-    // String url = "http://www.dtmb.top/api/fans/index?id=" + uid;
     MyHttpResult result;
+    Serial.printf("[BILI_HTTP] http_request() start, uid=%s\n", uid.c_str());
+    Serial.flush();
     String url = FANS_API + uid;
+    Serial.printf("[BILI_HTTP] url=%s\n", url.c_str());
+    Serial.flush();
     HTTPClient httpClient;
     httpClient.setTimeout(1000);
+    Serial.printf("[BILI_HTTP] calling begin()...\n");
+    Serial.flush();
     bool status = httpClient.begin(url);
+    Serial.printf("[BILI_HTTP] begin() returned %d\n", (int)status);
+    Serial.flush();
     if (status == false)
     {
         result.httpCode = -1;
         return result;
     }
+    Serial.printf("[BILI_HTTP] calling GET()...\n");
+    Serial.flush();
     int httpCode = httpClient.GET();
+    Serial.printf("[BILI_HTTP] GET() returned %d\n", httpCode);
+    Serial.flush();
     String httpResponse = httpClient.getString();
     httpClient.end();
     result.httpCode = httpCode;
@@ -171,7 +182,11 @@ static int bilibili_exit_callback(void *param)
 
 static void update_fans_num()
 {
+    Serial.printf("[BILI] update_fans_num() start, uid=%s\n", cfg_data.bili_uid.c_str());
+    Serial.flush();
     MyHttpResult result = http_request(cfg_data.bili_uid);
+    Serial.printf("[BILI] http_request returned, httpCode=%d\n", result.httpCode);
+    Serial.flush();
     if (-1 == result.httpCode)
     {
         Serial.println("[HTTP] Http request failed.");
