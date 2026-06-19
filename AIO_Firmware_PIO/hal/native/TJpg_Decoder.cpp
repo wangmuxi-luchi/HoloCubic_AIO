@@ -5,6 +5,16 @@
 
 TJpg_Decoder TJpgDec;
 
+// 解码完成标志（供自动测试框架钩子读取）
+volatile int g_jpg_decode_done = 0;
+
+extern "C" int hal_native_is_jpg_decode_done(void)
+{
+    int result = g_jpg_decode_done;
+    g_jpg_decode_done = 0;
+    return result;
+}
+
 TJpg_Decoder::TJpg_Decoder() {}
 TJpg_Decoder::~TJpg_Decoder() {}
 
@@ -79,6 +89,7 @@ JRESULT TJpg_Decoder::drawSdJpg(int32_t x, int32_t y, File inFile)
     }
 
     stbi_image_free(img);
+    g_jpg_decode_done = 1;
     return JDR_OK;
 }
 
@@ -121,5 +132,6 @@ JRESULT TJpg_Decoder::drawJpg(int32_t x, int32_t y, const uint8_t array[], uint3
     }
 
     stbi_image_free(img);
+    g_jpg_decode_done = 1;
     return JDR_OK;
 }

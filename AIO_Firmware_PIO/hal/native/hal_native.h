@@ -58,6 +58,10 @@ void hal_native_inject_action(int action);
 // 在 hal_native_loop() 中每帧调用，可在此注入测试动作
 void hal_native_auto_test_hook(void);
 
+// 检查 JPEG 解码是否完成（由 TJpg_Decoder 设置，自动测试框架读取）
+// 返回 1 表示自上次查询以来有新的解码完成，读取后自动清零
+int hal_native_is_jpg_decode_done(void);
+
 #ifdef __cplusplus
 }
 #endif

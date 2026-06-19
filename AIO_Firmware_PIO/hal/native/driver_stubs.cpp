@@ -214,6 +214,14 @@ File_Info *SdCard::listDir(const char *dirname)
 // ==================== IMU ====================
 IMU::IMU()
 {
+    action_info.active = ACTIVE_TYPE::UNKNOWN;
+    action_info.isValid = 0;
+    action_info.long_time = false;
+    for (int i = 0; i < ACTION_HISTORY_BUF_LEN; i++) {
+        act_info_history[i] = ACTIVE_TYPE::UNKNOWN;
+    }
+    act_info_history_ind = ACTION_HISTORY_BUF_LEN - 1;
+    order = 0;
 }
 
 void IMU::init(uint8_t order, uint8_t auto_calibration, SysMpuConfig *mpu_cfg)
