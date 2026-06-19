@@ -274,6 +274,16 @@ void WiFiClient::print(int n)
     Print::print(n);
 }
 
+void WiFiClient::print(const String &s)
+{
+    Print::print(s.c_str());
+}
+
+void WiFiClient::println(const String &s)
+{
+    Print::println(s.c_str());
+}
+
 // ==================== WiFiServer ====================
 
 WiFiServer::WiFiServer(uint16_t port) : _sock(-1), _port(port), _listening(false)

@@ -75,7 +75,15 @@ using std::max;
 
 #ifdef __cplusplus
 
-class String
+class Print;
+
+class Printable
+{
+public:
+    virtual size_t printTo(Print& p) const = 0;
+};
+
+class String : public Printable
 {
 public:
     String() : _str() {}
@@ -104,6 +112,11 @@ public:
     String &operator+=(const String &s) { _str += s._str; return *this; }
     String &operator+=(char c) { _str += c; return *this; }
     String &operator+=(int val) { char buf[32]; snprintf(buf, sizeof(buf), "%d", val); _str += buf; return *this; }
+
+    bool concat(const char *cstr) { if (cstr) _str += cstr; return true; }
+    bool concat(const String &s) { _str += s._str; return true; }
+    bool concat(char c) { _str += c; return true; }
+    bool concat(int val) { char buf[32]; snprintf(buf, sizeof(buf), "%d", val); _str += buf; return true; }
 
     String operator+(const char *cstr) const { String r(*this); r += cstr; return r; }
     String operator+(const String &s) const { String r(*this); r += s._str; return r; }
@@ -162,11 +175,15 @@ public:
         else _str = _str.substr(start, end - start + 1);
     }
 
+    size_t printTo(Print& p) const;
+
 private:
     std::string _str;
 };
 
 inline String operator+(const char *lhs, const String &rhs) { return String(lhs) + rhs; }
+
+class StringSumHelper : public String {};
 
 class Print
 {
@@ -212,6 +229,8 @@ public:
         return print(buf);
     }
 };
+
+inline size_t String::printTo(Print& p) const { return p.write((const uint8_t*)_str.c_str(), _str.length()); }
 
 class HardwareSerial : public Print
 {

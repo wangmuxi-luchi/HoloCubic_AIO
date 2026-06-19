@@ -54,8 +54,10 @@ public:
     operator bool();
     void println(const char *s = "");
     void println(int n);
+    void println(const String &s);
     void print(const char *s);
     void print(int n);
+    void print(const String &s);
     size_t write(const char *str);
 
 private:
