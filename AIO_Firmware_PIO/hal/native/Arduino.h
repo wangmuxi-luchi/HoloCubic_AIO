@@ -77,6 +77,7 @@ class String
 public:
     String() : _str() {}
     String(const char *cstr) : _str(cstr ? cstr : "") {}
+    String(const char *cstr, int len) : _str(cstr ? std::string(cstr, (size_t)len) : "") {}
     String(const String &s) : _str(s._str) {}
     String(const std::string &s) : _str(s) {}
     String(int val) { char buf[32]; snprintf(buf, sizeof(buf), "%d", val); _str = buf; }
@@ -167,12 +168,14 @@ inline String operator+(const char *lhs, const String &rhs) { return String(lhs)
 class Print
 {
 public:
-    virtual size_t write(uint8_t) { return 0; }
+    virtual size_t write(uint8_t) = 0;
     virtual size_t write(const uint8_t *buffer, size_t size) {
         size_t n = 0;
         while (size--) { write(*buffer++); n++; }
         return n;
     }
+    virtual void flush() {}
+    size_t write(const char *str) { return write((const uint8_t *)str, strlen(str)); }
 
     size_t print(const char *s) { return write((const uint8_t *)s, strlen(s)); }
     size_t print(const String &s) { return write((const uint8_t *)s.c_str(), s.length()); }

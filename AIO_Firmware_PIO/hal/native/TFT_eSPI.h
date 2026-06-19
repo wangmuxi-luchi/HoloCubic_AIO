@@ -38,6 +38,10 @@ public:
     void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t *data) { (void)x; (void)y; (void)w; (void)h; (void)data; }
     void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *data) { (void)x; (void)y; (void)w; (void)h; (void)data; }
     void pushPixels(const void *data, uint32_t len) { (void)data; (void)len; }
+    bool getSwapBytes(void) { return false; }
+    void setSwapBytes(bool swap) { (void)swap; }
+    void pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *bitmap, uint16_t *dmaBuffer) { (void)x; (void)y; (void)w; (void)h; (void)bitmap; (void)dmaBuffer; }
+    void initDMA(void) {}
 };
 
 extern TFT_eSPI *tft;

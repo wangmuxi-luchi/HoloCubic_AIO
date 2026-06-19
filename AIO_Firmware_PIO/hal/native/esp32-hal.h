@@ -38,6 +38,18 @@ public:
 
 extern EspClass ESP;
 
+#define MALLOC_CAP_DMA  (1 << 1)
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void *heap_caps_malloc(size_t size, uint32_t caps);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* __cplusplus */
 
 #endif /* ESP32_HAL_STUB_H */
