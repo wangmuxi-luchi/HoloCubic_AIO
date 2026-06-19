@@ -21,9 +21,9 @@ class WiFiClass
 {
 public:
     int status() { return WL_CONNECTED; }
-    void begin(const char *ssid, const char *password) {}
+    void begin(const char *ssid, const char *password) { (void)ssid; (void)password; }
     void disconnect() {}
-    IPAddress localIP() { return IPAddress(127, 0, 0, 1); }
+    IPAddress localIP();
     IPAddress softAPIP() { return IPAddress(192, 168, 4, 1); }
     int getMode() { return WIFI_MODE_STA; }
 };
@@ -33,23 +33,55 @@ extern WiFiClass WiFi;
 class WiFiClient : public Client
 {
 public:
-    WiFiClient() {}
-    int connect(IPAddress ip, uint16_t port) { (void)ip; (void)port; return 1; }
-    int connect(const char *host, uint16_t port) { (void)host; (void)port; return 1; }
-    size_t write(uint8_t c) override { (void)c; return 1; }
-    size_t write(const uint8_t *buf, size_t size) override { (void)buf; return size; }
-    int available() { return 0; }
-    int read() { return -1; }
-    int read(uint8_t *buf, size_t size) { (void)buf; (void)size; return 0; }
-    int peek() { return -1; }
-    void flush() {}
-    void stop() {}
-    uint8_t connected() { return 1; }
-    operator bool() { return true; }
-    void println(const char *s = "") { (void)s; }
-    void println(int n) { (void)n; }
-    void print(const char *s) { (void)s; }
-    void print(int n) { (void)n; }
+    WiFiClient();
+    WiFiClient(int fd);
+    ~WiFiClient();
+    WiFiClient(const WiFiClient &other);
+    WiFiClient &operator=(const WiFiClient &other);
+
+    int connect(IPAddress ip, uint16_t port) override;
+    int connect(const char *host, uint16_t port) override;
+    int connect(const char *host, uint16_t port, int timeout) override;
+    size_t write(uint8_t c) override;
+    size_t write(const uint8_t *buf, size_t size) override;
+    int available() override;
+    int read() override;
+    int read(uint8_t *buf, size_t size) override;
+    int peek() override;
+    void flush() override;
+    void stop() override;
+    uint8_t connected() override;
+    operator bool();
+    void println(const char *s = "");
+    void println(int n);
+    void print(const char *s);
+    void print(int n);
+    size_t write(const char *str);
+
+private:
+    int _sock;
+    void _init();
+    void _close();
+};
+
+class WiFiServer
+{
+public:
+    WiFiServer(uint16_t port = 80);
+    ~WiFiServer();
+    void begin();
+    void begin(uint16_t port);
+    void end();
+    void stop();
+    void close();
+    void setNoDelay(bool nodelay);
+    WiFiClient available();
+    uint8_t status();
+
+private:
+    int _sock;
+    uint16_t _port;
+    bool _listening;
 };
 
 #endif

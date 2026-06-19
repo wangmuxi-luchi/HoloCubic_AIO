@@ -10,19 +10,38 @@
 class HTTPClient
 {
 public:
-    bool begin(const char *url) { (void)url; return true; }
-    bool begin(String url) { return true; }
-    int GET() { return 200; }
-    int POST(const char *body) { (void)body; return 200; }
-    int POST(String body) { return 200; }
-    int sendRequest(const char *method, const char *body) { (void)method; (void)body; return 200; }
-    int getSize() { return 0; }
-    String getString() { return ""; }
-    String errorToString(int error) { (void)error; return ""; }
-    void setTimeout(uint16_t timeout) { (void)timeout; }
-    void addHeader(const char *name, const char *value) { (void)name; (void)value; }
-    void end() {}
-    bool connected() { return false; }
+    HTTPClient();
+    ~HTTPClient();
+    bool begin(const char *url);
+    bool begin(String url);
+    int GET();
+    int POST(const char *body);
+    int POST(String body);
+    int sendRequest(const char *method, const char *body);
+    int getSize();
+    String getString();
+    String errorToString(int error);
+    void setTimeout(uint16_t timeout);
+    void addHeader(const char *name, const char *value);
+    void end();
+    bool connected();
+
+private:
+    void _parseUrl(const char *url);
+    int _sendRequest(const char *method, const char *body);
+    int _sendRequestHttps(const char *method, const char *body);
+
+    String _host;
+    String _path;
+    uint16_t _port;
+    bool _https;
+    int _httpCode;
+    int _contentLength;
+    String _responseBody;
+    uint16_t _timeout;
+    String _headers;
+    bool _connected;
+    void *_client;
 };
 
 #endif
