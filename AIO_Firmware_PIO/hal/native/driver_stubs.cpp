@@ -115,6 +115,17 @@ bool IMU::Encoder_GetIsPush(void)
 
 ImuAction* IMU::getAction(void)
 {
+    int key_action = hal_imu_get_action();
+    switch (key_action) {
+        case 1:  action_info.active = RETURN;        break;
+        case 2:  action_info.active = TURN_LEFT;     break;
+        case 3:  action_info.active = TURN_RIGHT;    break;
+        case 4:  action_info.active = UP;            break;
+        case 5:  action_info.active = DOWN;          break;
+        case 6:  action_info.active = SHAKE;         break;
+        case 7:  action_info.active = GO_FORWORD;    break;
+        default: action_info.active = UNKNOWN;       break;
+    }
     return &action_info;
 }
 

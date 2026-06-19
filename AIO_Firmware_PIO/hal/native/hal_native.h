@@ -26,7 +26,7 @@ void hal_display_flush(int x1, int y1, int x2, int y2, const void *color_p);
 void hal_lvgl_flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p);
 
 // IMU 模拟：获取键盘生成的模拟动作数据
-// 返回: 0=无动作, 1=左翻, 2=右翻, 3=上, 4=下, 5=前, 6=摇晃
+// 返回: 0=无动作, 1=返回, 2=左翻, 3=右翻, 4=上, 5=下, 6=摇晃, 7=前倾/进入
 int hal_imu_get_action(void);
 
 // 获取 IMU 原始数据（加速度 + 陀螺仪）

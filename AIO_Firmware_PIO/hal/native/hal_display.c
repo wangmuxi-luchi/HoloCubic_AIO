@@ -21,11 +21,13 @@ static lv_color_t   *fb_buf   = NULL;  // 整帧 framebuffer
 // 键盘动作共享变量
 typedef enum {
     HAL_ACTION_NONE = 0,
+    HAL_ACTION_RETURN,
     HAL_ACTION_TURN_LEFT,
     HAL_ACTION_TURN_RIGHT,
     HAL_ACTION_UP,
     HAL_ACTION_DOWN,
-    HAL_ACTION_SHAKE
+    HAL_ACTION_SHAKE,
+    HAL_ACTION_GO_FORWORD
 } hal_action_t;
 
 static volatile hal_action_t g_last_action = HAL_ACTION_NONE;
@@ -60,7 +62,7 @@ void hal_native_init(void)
     SDL_CreateThread(tick_thread, "tick", NULL);
 
     printf("[HAL] SDL2 initialized: %dx%d window\n", SDL_HOR_RES, SDL_VER_RES);
-    printf("[HAL] Keyboard: LEFT/RIGHT=flip, UP/DOWN=vertical, SPACE=shake\n");
+    printf("[HAL] Keyboard: LEFT/RIGHT=switch, UP/DOWN=vertical, SPACE=enter, BACKSPACE=back, ENTER=shake\n");
 }
 
 bool hal_native_loop(void)
@@ -75,11 +77,13 @@ bool hal_native_loop(void)
         }
         if (event.type == SDL_KEYDOWN) {
             switch (event.key.keysym.sym) {
-                case SDLK_LEFT:   g_last_action = HAL_ACTION_TURN_LEFT;  break;
-                case SDLK_RIGHT:  g_last_action = HAL_ACTION_TURN_RIGHT; break;
-                case SDLK_UP:     g_last_action = HAL_ACTION_UP;         break;
-                case SDLK_DOWN:   g_last_action = HAL_ACTION_DOWN;       break;
-                case SDLK_SPACE:  g_last_action = HAL_ACTION_SHAKE;      break;
+                case SDLK_LEFT:     g_last_action = HAL_ACTION_TURN_LEFT;  break;
+                case SDLK_RIGHT:    g_last_action = HAL_ACTION_TURN_RIGHT; break;
+                case SDLK_UP:       g_last_action = HAL_ACTION_UP;         break;
+                case SDLK_DOWN:     g_last_action = HAL_ACTION_DOWN;       break;
+                case SDLK_SPACE:    g_last_action = HAL_ACTION_GO_FORWORD; break;
+                case SDLK_RETURN:   g_last_action = HAL_ACTION_SHAKE;      break;
+                case SDLK_BACKSPACE: g_last_action = HAL_ACTION_RETURN;    break;
                 default: break;
             }
         }
@@ -91,9 +95,10 @@ bool hal_native_loop(void)
     SDL_RenderPresent(renderer);
 
     sdl_frame++;
-    if (sdl_frame % 100 == 0) {
-        printf("[SDL] render frame=%lu\n", sdl_frame);
-    }
+    // 不在运行时刷屏，按需可改为 % 1000 或取消注释
+    // if (sdl_frame % 100 == 0) {
+    //     printf("[SDL] render frame=%lu\n", sdl_frame);
+    // }
 
     SDL_Delay(1);
     return true;
