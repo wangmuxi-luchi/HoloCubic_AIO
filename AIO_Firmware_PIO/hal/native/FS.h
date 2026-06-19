@@ -66,6 +66,41 @@ namespace fs
             if (_f) _extractName(path);
         }
 
+        File(const File &other)
+        {
+            _init();
+            _f = other._f;
+            _isDir = other._isDir;
+            strncpy(_name, other._name, sizeof(_name) - 1);
+            strncpy(_dirPattern, other._dirPattern, sizeof(_dirPattern) - 1);
+            _dirHandle = other._dirHandle;
+            _dirOpened = other._dirOpened;
+            _findData = other._findData;
+            const_cast<File &>(other)._f = nullptr;
+            const_cast<File &>(other)._isDir = false;
+            const_cast<File &>(other)._dirHandle = -1;
+            const_cast<File &>(other)._dirOpened = false;
+        }
+
+        File &operator=(const File &other)
+        {
+            if (this != &other) {
+                close();
+                _f = other._f;
+                _isDir = other._isDir;
+                strncpy(_name, other._name, sizeof(_name) - 1);
+                strncpy(_dirPattern, other._dirPattern, sizeof(_dirPattern) - 1);
+                _dirHandle = other._dirHandle;
+                _dirOpened = other._dirOpened;
+                _findData = other._findData;
+                const_cast<File &>(other)._f = nullptr;
+                const_cast<File &>(other)._isDir = false;
+                const_cast<File &>(other)._dirHandle = -1;
+                const_cast<File &>(other)._dirOpened = false;
+            }
+            return *this;
+        }
+
         ~File() { close(); }
 
         operator bool() const { return _f != nullptr || _isDir; }

@@ -24,9 +24,12 @@ typedef uint16_t word;
 
 typedef bool boolean;
 
-#define FILE_READ  "r"
-#define FILE_WRITE "w"
+#define FILE_READ  "rb"
+#define FILE_WRITE "wb"
 #define FILE_APPEND "a"
+
+#define memcpy_P memcpy
+#define memcmp_P memcmp
 
 #define INPUT        0x01
 #define OUTPUT       0x02

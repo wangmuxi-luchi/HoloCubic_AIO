@@ -7,8 +7,10 @@ class SDClass
 {
 public:
     bool begin(uint8_t cs = 0, uint32_t freq = 0) { (void)cs; (void)freq; return true; }
-    File open(const char *path, const char *mode = "r") { (void)path; (void)mode; return File(); }
-    bool exists(const char *path) { (void)path; return false; }
+    File open(const char *path, const char *mode = "r");
+    File open(const String &path, const char *mode = "r") { return open(path.c_str(), mode); }
+    bool exists(const char *path);
+    bool exists(const String &path) { return exists(path.c_str()); }
 };
 
 extern SDClass SD;

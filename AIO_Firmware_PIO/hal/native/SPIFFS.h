@@ -7,8 +7,11 @@
 #include <direct.h>
 #include "FS.h"
 
+#undef FILE_WRITE
 #define FILE_WRITE "wb"
+#undef FILE_READ
 #define FILE_READ  "rb"
+#undef FILE_APPEND
 #define FILE_APPEND "ab"
 
 class SPIFFSClass
