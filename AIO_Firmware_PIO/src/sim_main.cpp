@@ -1,6 +1,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include "hal_native.h"
+#include "auto_test.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -28,9 +29,11 @@ static void app_main_task(void *pvParameters)
     }
 }
 
-int main()
+int main(int argc, char *argv[])
 {
     BaseType_t ret;
+
+    auto_test_init(argc, argv);
 
     printf("[SIM] main() start\n");
     fflush(stdout);

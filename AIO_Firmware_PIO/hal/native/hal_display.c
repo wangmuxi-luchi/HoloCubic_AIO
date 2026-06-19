@@ -70,6 +70,10 @@ bool hal_native_loop(void)
     static unsigned long sdl_frame = 0;
     SDL_Event event;
 
+    // 自动测试钩子：如果 auto_test.cpp 覆盖了此弱函数，
+    // 则在此注入测试动作（替代键盘输入）
+    hal_native_auto_test_hook();
+
     // 处理所有等待中的 SDL 事件
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
@@ -146,4 +150,16 @@ int hal_native_get_key_action(void)
     hal_action_t action = (hal_action_t)g_last_action;
     g_last_action = HAL_ACTION_NONE;  // 消费后清除
     return (int)action;
+}
+
+// 自动测试：向模拟器注入动作
+void hal_native_inject_action(int action)
+{
+    g_last_action = (hal_action_t)action;
+}
+
+// 自动测试钩子（弱函数，默认空实现）
+// 由 auto_test.cpp 覆盖以实现自动测试
+__attribute__((weak)) void hal_native_auto_test_hook(void)
+{
 }

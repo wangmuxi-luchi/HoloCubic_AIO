@@ -2,6 +2,7 @@
 #include "hal_native.h"
 #include <cstdio>
 #include <cstring>
+#include <io.h>
 #include "SPIFFS.h"
 
 // ==================== Display ====================
@@ -88,6 +89,45 @@ void Ambient::init(int mode)
 }
 
 // ==================== SdCard ====================
+
+extern "C" {
+    __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void* hModule, char* lpFilename, unsigned long nSize);
+}
+
+static char g_sdBasePath[512] = "";
+
+static void computeSdBasePath()
+{
+    static bool computed = false;
+    if (computed) return;
+    computed = true;
+
+    char exePath[512];
+    GetModuleFileNameA(NULL, exePath, sizeof(exePath));
+    char *lastSlash = strrchr(exePath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+    lastSlash = strrchr(exePath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+    lastSlash = strrchr(exePath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+    lastSlash = strrchr(exePath, '\\');
+    if (lastSlash) *lastSlash = '\0';
+
+    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s\\sim_data\\sd", exePath);
+}
+
+static void toNativePath(const char *virtPath, char *nativePath, size_t size)
+{
+    computeSdBasePath();
+    if (virtPath[0] == 'S' && virtPath[1] == ':')
+        virtPath += 2;
+    if (virtPath[0] == '/' || virtPath[0] == '\\')
+        virtPath += 1;
+    snprintf(nativePath, size, "%s\\%s", g_sdBasePath, virtPath);
+    for (char *p = nativePath; *p; ++p)
+        if (*p == '/') *p = '\\';
+}
+
 void SdCard::init()
 {
 }
@@ -100,8 +140,75 @@ void SdCard::listDir(const char *dirname, uint8_t levels)
 
 File_Info *SdCard::listDir(const char *dirname)
 {
-    (void)dirname;
-    return nullptr;
+    char nativePath[512];
+    toNativePath(dirname, nativePath, sizeof(nativePath));
+
+    printf("[SDCARD] listDir(%s) -> %s\n", dirname, nativePath);
+
+    char pattern[512];
+    snprintf(pattern, sizeof(pattern), "%s\\*", nativePath);
+
+    struct _finddata_t fdata;
+    intptr_t handle = _findfirst(pattern, &fdata);
+    if (handle == -1)
+    {
+        printf("[SDCARD] _findfirst failed for %s\n", pattern);
+        return NULL;
+    }
+
+    int dir_len = strlen(dirname) + 1;
+
+    File_Info *head_file = (File_Info *)malloc(sizeof(File_Info));
+    head_file->file_type = FILE_TYPE_FOLDER;
+    head_file->file_name = (char *)malloc(dir_len);
+    strncpy(head_file->file_name, dirname, dir_len - 1);
+    head_file->file_name[dir_len - 1] = 0;
+    head_file->front_node = NULL;
+    head_file->next_node = NULL;
+
+    File_Info *file_node = head_file;
+    int file_count = 0;
+
+    do
+    {
+        if (strcmp(fdata.name, ".") == 0 || strcmp(fdata.name, "..") == 0)
+            continue;
+
+        int filename_len = strlen(fdata.name);
+        if (filename_len > 128 - 10)
+            continue;
+
+        file_node->next_node = (File_Info *)malloc(sizeof(File_Info));
+        file_node->next_node->front_node = file_node;
+        file_node = file_node->next_node;
+
+        file_node->file_name = (char *)malloc(filename_len + 1);
+        strncpy(file_node->file_name, fdata.name, filename_len);
+        file_node->file_name[filename_len] = 0;
+        file_node->next_node = NULL;
+
+        if (fdata.attrib & _A_SUBDIR)
+        {
+            file_node->file_type = FILE_TYPE_FOLDER;
+        }
+        else
+        {
+            file_node->file_type = FILE_TYPE_FILE;
+        }
+        file_count++;
+
+    } while (_findnext(handle, &fdata) == 0);
+
+    _findclose(handle);
+
+    if (NULL != head_file->next_node)
+    {
+        file_node->next_node = head_file->next_node;
+        head_file->next_node->front_node = file_node;
+    }
+
+    printf("[SDCARD] listDir found %d files\n", file_count);
+    return head_file;
 }
 
 // ==================== IMU ====================
@@ -316,8 +423,7 @@ extern "C" void vApplicationGetTimerTaskMemory(StaticTask_t **ppxTimerTaskTCBBuf
 }
 
 // ==================== TJpg_Decoder 桩 ====================
-#include "TJpg_Decoder.h"
-TJpg_Decoder TJpgDec;
+// TJpgDec is defined in lib/TJpg_Decoder (now included via platformio.ini)
 
 // ==================== esp_system 桩 ====================
 #include "esp_system.h"
@@ -355,5 +461,17 @@ extern "C" void *heap_caps_malloc(size_t size, uint32_t caps)
 
 void release_file_info(File_Info *info)
 {
-    (void)info;
+    if (NULL == info)
+        return;
+
+    File_Info *node = info->next_node;
+    while (node != NULL && node != info->next_node)
+    {
+        File_Info *next = node->next_node;
+        free(node->file_name);
+        free(node);
+        node = next;
+    }
+    free(info->file_name);
+    free(info);
 }

@@ -213,12 +213,7 @@ int AppController::main_process(ImuAction *act_info)
         app_control_display_scr(appList[cur_app_index]->app_image,
                                 appList[cur_app_index]->app_name,
                                 LV_SCR_LOAD_ANIM_NONE, false);
-        Serial.printf("[APPCTRL] calling app[%d]='%s' main_process()...\n",
-                      cur_app_index, appList[cur_app_index]->app_name);
-        Serial.flush();
         (*(appList[cur_app_index]->main_process))(this, act_info);
-        Serial.printf("[APPCTRL] app[%d] main_process() returned\n", cur_app_index);
-        Serial.flush();
     }
     act_info->active = ACTIVE_TYPE::UNKNOWN;
     act_info->isValid = 0;

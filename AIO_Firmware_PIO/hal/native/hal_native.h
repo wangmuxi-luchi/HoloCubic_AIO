@@ -51,6 +51,13 @@ bool hal_sd_exists(const char *path);
 // RGB LED 模拟
 void hal_rgb_set_color(uint8_t r, uint8_t g, uint8_t b);
 
+// 自动测试：向模拟器注入动作（替代键盘输入）
+void hal_native_inject_action(int action);
+
+// 自动测试钩子（弱函数，由 auto_test.cpp 覆盖）
+// 在 hal_native_loop() 中每帧调用，可在此注入测试动作
+void hal_native_auto_test_hook(void);
+
 #ifdef __cplusplus
 }
 #endif
