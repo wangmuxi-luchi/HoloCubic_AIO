@@ -141,6 +141,7 @@ int AppController::main_process(ImuAction *act_info)
     {
         Serial.print(F("[Operate]\tact_info->active: "));
         Serial.println(active_type_info[act_info->active]);
+        Serial.flush();
     }
 
     if (isRunEventDeal)
@@ -169,6 +170,8 @@ int AppController::main_process(ImuAction *act_info)
         }
         else if (ACTIVE_TYPE::TURN_RIGHT == act_info->active)
         {
+            Serial.printf("[APPCTRL] TURN_RIGHT branch, cur_app_index=%d, app_num=%d\n", cur_app_index, app_num);
+            Serial.flush();
             anim_type = LV_SCR_LOAD_ANIM_MOVE_LEFT;
             pre_app_index = cur_app_index;
             // 以下等效与 processId = (processId - 1 + APP_NUM) % 4;
