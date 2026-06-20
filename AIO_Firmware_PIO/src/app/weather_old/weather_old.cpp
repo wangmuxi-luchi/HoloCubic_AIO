@@ -250,7 +250,7 @@ static void weather_process(AppController *sys,
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
             sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
+                         APP_MESSAGE_WIFI_CONN, (void *)(intptr_t)run_data->clock_page, NULL);
             run_data->coactusUpdateFlag = 0x00;
         }
     }
@@ -266,7 +266,7 @@ static void weather_process(AppController *sys,
         {
             // 尝试同步网络上的时钟
             sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
+                         APP_MESSAGE_WIFI_CONN, (void *)(intptr_t)run_data->clock_page, NULL);
             run_data->coactusUpdateFlag = 0x00;
         }
     }
@@ -308,7 +308,7 @@ static void weather_message_handle(const char *from, const char *to,
     {
         Serial.print(GET_SYS_MILLIS());
         Serial.print(F("----->weather_event_notification\n"));
-        int event_id = (int)message;
+        int event_id = (int)(intptr_t)message;
         if (0 == run_data->clock_page && run_data->clock_page == event_id)
         {
             // 如果要改城市这里也需要修改

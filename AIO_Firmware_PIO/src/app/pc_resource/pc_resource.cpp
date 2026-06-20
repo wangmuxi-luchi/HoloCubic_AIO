@@ -268,7 +268,7 @@ static void pc_resource_message_handle(const char *from, const char *to,
     case APP_MESSAGE_WIFI_CONN:
     {
         Serial.println(F("----->pc_resource_event_notification"));
-        int event_id = (int)message;
+        int event_id = (int)(intptr_t)message;
         switch (event_id)
         {
         case UPDATE_RS_DATA:

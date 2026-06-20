@@ -48,8 +48,12 @@ boolean doDelayMillisTime(unsigned long interval,
 #define SCREEN_HOR_RES 240 // 水平
 #define SCREEN_VER_RES 240 // 竖直
 
+#ifndef SCREEN_HEIGHT
 #define SCREEN_HEIGHT SCREEN_VER_RES
+#endif
+#ifndef SCREEN_WIDTH
 #define SCREEN_WIDTH SCREEN_HOR_RES
+#endif
 
 // TFT屏幕接口
 // #define PEAK
