@@ -26,6 +26,7 @@
 #include <FreeRTOS.h>
 #include <task.h>
 #include <queue.h>
+#include "network_async.h"
 QueueHandle_t g_action_queue = NULL;
 
 bool isCheckAction = false;

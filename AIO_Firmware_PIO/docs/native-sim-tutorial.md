@@ -233,13 +233,20 @@ for test in "Picture" "2048" "Settings" "Idea" "WebServer" "File Manager" "LH&LX
 done
 ```
 
-**PowerShell (Windows):**
+**PowerShell (Windows) — 带超时保护：**
 ```powershell
-foreach ($test in @("Picture","2048","Settings","Idea","WebServer","File Manager","LH&LXW")) {
-    Write-Host "=== Testing: $test ==="
-    .\.pio\build\AIO_native_sim\program.exe --auto-test="$test"
-    Write-Host "Exit code: $LASTEXITCODE`n"
+$timeout = 90
+foreach ($test_name in @("Picture","2048","Settings","Idea","WebServer","File Manager")) {
+    Write-Host "=== Testing: $test_name ==="
+    $proc = Start-Process -FilePath ".\.pio\build\AIO_native_sim\program.exe" -ArgumentList "--auto-test=`"$test_name`"" -NoNewWindow -PassThru
+    $proc | Wait-Process -Timeout $timeout -ErrorAction SilentlyContinue
+    if ($proc.HasExited) { Write-Host "Exit code: $($proc.ExitCode)`n" } else { $proc.Kill(); Write-Host "TIMEOUT`n" }
 }
+# LH&LXW 单独处理（& 需反引号转义）
+Write-Host "=== Testing: LH&LXW ==="
+$proc = Start-Process -FilePath ".\.pio\build\AIO_native_sim\program.exe" -ArgumentList "--auto-test=`"LH&LXW`"" -NoNewWindow -PassThru
+$proc | Wait-Process -Timeout $timeout -ErrorAction SilentlyContinue
+if ($proc.HasExited) { Write-Host "Exit code: $($proc.ExitCode)`n" } else { $proc.Kill(); Write-Host "TIMEOUT`n" }
 ```
 
 ---

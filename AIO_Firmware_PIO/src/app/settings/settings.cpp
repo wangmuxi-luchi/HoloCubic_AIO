@@ -3,6 +3,7 @@
 #include "settings_gui.h"
 #include "sys/app_controller.h"
 #include "common.h"
+#include "network_async.h"
 
 #define NEW_VERSION "http://climbsnail.cn:5001/holocubicAIO/sn/v1/version/firmware"
 #define SETTINGS_APP_NAME "Settings"
@@ -15,6 +16,9 @@ struct SettingsAppRunData
 };
 
 static SettingsAppRunData *run_data = NULL;
+
+static HttpRequest *g_version_req = NULL;
+static bool g_version_displayed = false;
 
 int exec_order(int len, const uint8_t *data)
 {
@@ -170,7 +174,25 @@ static void settings_process(AppController *sys,
 {
     if (RETURN == act_info->active)
     {
-        sys->app_exit(); // 退出APP
+        sys->app_exit();
+        return;
+    }
+
+    if (!g_version_displayed && g_version_req)
+    {
+        if (g_version_req->done)
+        {
+            __sync_synchronize();
+            char ver[16] = "v UNKNOWN";
+            if (g_version_req->http_code > 0)
+            {
+                snprintf(ver, sizeof(ver), "%s", g_version_req->response + 13);
+            }
+            display_settings(AIO_VERSION, ver, LV_SCR_LOAD_ANIM_NONE);
+            vPortFree(g_version_req);
+            g_version_req = NULL;
+            g_version_displayed = true;
+        }
         return;
     }
 
@@ -234,6 +256,13 @@ static int settings_exit_callback(void *param)
 {
     settings_gui_del();
 
+    if (g_version_req)
+    {
+        vPortFree(g_version_req);
+        g_version_req = NULL;
+    }
+    g_version_displayed = false;
+
     // 释放运行数据
     if (NULL != run_data)
     {
@@ -252,10 +281,10 @@ static void settings_message_handle(const char *from, const char *to,
     {
     case APP_MESSAGE_WIFI_CONN:
     {
-        // todo
-        char ver[16];
-        get_new_version(ver);
-        display_settings(AIO_VERSION, ver, LV_SCR_LOAD_ANIM_NONE);
+        if (g_version_req == NULL && !g_version_displayed)
+        {
+            g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
+        }
     }
     break;
     case APP_MESSAGE_WIFI_AP:
