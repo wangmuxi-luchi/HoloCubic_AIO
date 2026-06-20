@@ -20,7 +20,11 @@ static void screen_draw_pixel(int32_t x, int32_t y, uint16_t color); //描点函
 
 static void gfx_draw_pixel(int x, int y, unsigned int rgb) //指定GUI库的描点函数
 {
-    screen_draw_pixel(x, y, rgb);
+    // ARGB8888 → RGB332: R3=bits[23:21], G3=bits[15:13], B2=bits[7:6]
+    uint8_t c = (uint8_t)(((rgb >> 21) & 0x07) << 5) |
+                (uint8_t)(((rgb >> 13) & 0x07) << 2) |
+                (uint8_t)((rgb >> 6) & 0x03);
+    screen_draw_pixel(x, y, c);
 }
 
 struct EXTERNAL_GFX_OP
@@ -72,6 +76,7 @@ static int idea_init(AppController *sys)
 static void idea_process(AppController *sys,
                          const ImuAction *action)
 {
+
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_NONE;
 
     if (RETURN == action->active)
@@ -93,11 +98,10 @@ static void idea_process(AppController *sys,
         delay(500);
     }
 
-    //清屏，以黑色作为背景
-    screen_clear(0x0000);                                          //增加清除旧显存的代码
-    ui_update(choose);                                             // ui更新//最终所有的特效调用都在这里面
-    tft->pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, screen_buf); //显示图像
-    delay(20);                                                     //改变这个延时函数就能改变特效播放的快慢
+    screen_clear(0x0000);
+    ui_update(choose);
+    tft->pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, screen_buf);
+    delay(20);
 }
 
 static void idea_background_task(AppController *sys,

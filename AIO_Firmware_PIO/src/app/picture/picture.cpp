@@ -112,7 +112,7 @@ static int picture_init(AppController *sys)
     run_data->image_file = NULL;
     run_data->pfile = NULL;
     run_data->image_pos_increate = 1;
-    // 保存系统的tft设置参数 用于退出时恢复设置
+    run_data->refreshFlag = true; // 触发首帧显示
     run_data->tftSwapStatus = tft->getSwapBytes();
     tft->setSwapBytes(true); // We need to swap the colour bytes (endianess)
 
@@ -132,6 +132,10 @@ static int picture_init(AppController *sys)
 static void picture_process(AppController *sys,
                             const ImuAction *act_info)
 {
+    Serial.printf("[PIC] process enter, active=%d, refreshFlag=%d, image_file=%p\n",
+                  act_info->active, run_data->refreshFlag, run_data->image_file);
+    Serial.flush();
+
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_FADE_ON;
 
     if (RETURN == act_info->active)
@@ -181,18 +185,26 @@ static void picture_process(AppController *sys,
         // Draw the image, top left at 0,0
         Serial.print(F("Decode image: "));
         Serial.println(file_name);
+        Serial.flush();
         if (NULL != strstr(file_name, ".jpg") || NULL != strstr(file_name, ".JPG"))
         {
-            // 直接解码jpg格式的图片
+            Serial.printf("[PIC] calling TJpgDec.drawSdJpg...\n");
+            Serial.flush();
             TJpgDec.drawSdJpg(0, 0, file_name);
+            Serial.printf("[PIC] TJpgDec.drawSdJpg returned\n");
+            Serial.flush();
+            run_data->refreshFlag = false;
         }
         else if (NULL != strstr(file_name, ".bin") || NULL != strstr(file_name, ".BIN"))
         {
-            // 使用LVGL的bin格式的图片
             display_photo(file_name, anim_type);
+            run_data->refreshFlag = false;
         }
-        run_data->refreshFlag = false;
-        // 重置更新的时间标记
+        else
+        {
+            Serial.println(F("  -> Unsupported format, skipping"));
+            run_data->refreshFlag = true;
+        }
         run_data->pic_perMillis = GET_SYS_MILLIS();
     }
     delay(300);

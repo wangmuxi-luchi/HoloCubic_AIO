@@ -6,9 +6,18 @@
 #include "network.h"
 #include "common.h"
 
+#ifdef NATIVE_SIMULATION
+#include "hal_native.h"
+#endif
+
 #define SERVER_REFLUSH_INTERVAL 5000UL // 配置界面重新刷新时间(5s)
 #define DNS_PORT 53                    // DNS端口
-WebServer server(80);
+#ifdef NATIVE_SIMULATION
+#define SERVER_PORT 8080
+#else
+#define SERVER_PORT 80
+#endif
+WebServer server(SERVER_PORT);
 
 // DNSServer dnsServer;
 
@@ -25,6 +34,9 @@ void start_web_config()
 {
     // 首页
     server.on("/", HTTP_GET, HomePage);
+    server.on("/favicon.ico", HTTP_GET, []() {
+        server.send(204);  // 无图标，浏览器不再重复请求
+    });
 
     init_page_header();
     init_page_footer();
@@ -215,6 +227,9 @@ static void server_message_handle(const char *from, const char *to,
             LV_SCR_LOAD_ANIM_NONE);
         start_web_config();
         run_data->web_start = 1;
+#ifdef NATIVE_SIMULATION
+        hal_native_server_routes_ready();
+#endif
     }
     break;
     case APP_MESSAGE_WIFI_ALIVE:

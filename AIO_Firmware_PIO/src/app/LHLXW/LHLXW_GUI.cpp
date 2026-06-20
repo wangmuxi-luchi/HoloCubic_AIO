@@ -67,8 +67,10 @@ static void h_cb(lv_obj_t *var,int32_t v){
 
 
 void LHLXW_GUI_Init(void){
+    printf("[LHLXW_GUI] Init start, creating screen...\n"); fflush(stdout);
     lhlxw_run->LV_BACKUP_OBJ = lv_scr_act();//备份此前的屏幕，以便退出APP时恢复原样（实测退出APP不切换到备份屏幕就会出问题）
     lhlxw_run->LV_LHLXW_GUI_OBJ = lv_obj_create(NULL);//创建一个空的活动页面作为app主页面
+    printf("[LHLXW_GUI] screen created, setting up 5 buttons...\n"); fflush(stdout);
     /* 如果将启动动画放这里能避免一次性占吃掉很多内存，但是动画结束之后出现表情菜单又非常生硬 */
     //startLog(LV_LHLXW_GUI_OBJ);//开始log动画，动画结束后会切换到LV_LHLXW_GUI_OBJ页面也就是APP主页面
     
@@ -92,7 +94,9 @@ void LHLXW_GUI_Init(void){
     lv_obj_set_style_text_font(lhlxw_run->option_label,&APP_OPTION_ico,LV_STATE_DEFAULT );
     lv_label_set_text(lhlxw_run->option_label,tier_mode[0].tierText);
     /* 放此处会导致表情页面和动画页面同时存在，对RAM要求大  */
+    printf("[LHLXW_GUI] calling startLog animation...\n"); fflush(stdout);
     startLog(lhlxw_run->LV_LHLXW_GUI_OBJ);//开始log动画，动画结束后会切换到LV_LHLXW_GUI_OBJ页面也就是APP主页面
+    printf("[LHLXW_GUI] Init done (startLog returned)\n"); fflush(stdout);
 }
 
 /* 切换选项 */
@@ -133,15 +137,20 @@ void SWITCH_OPTION(bool _flg_,uint8_t mode){
 }
 
 void LHLXW_GUI_DeInit(void){
+    printf("[LHLXW_GUI] DeInit start, loading backup screen...\n"); fflush(stdout);
     /* 切换页面，同时删除旧屏幕(这里不用此函数自带的删除，等执行完后手动删除) */
     lv_scr_load_anim(lhlxw_run->LV_BACKUP_OBJ, LV_SCR_LOAD_ANIM_OUT_BOTTOM, 573, 0, false);//调用系统退出函数之前，一定要等待动画结束否则会导致系统重启
 
     /* 这里加延时是为了防止动画执行完成前就调用系统退出函数或者删除动画对象导致系统出错 */
+    printf("[LHLXW_GUI] DeInit waiting 573ms for animation...\n"); fflush(stdout);
     for(uint16_t i=0;i<573;i++){
         lv_task_handler();
         delay(1);
+        if (i % 100 == 0) { printf("[LHLXW_GUI]   DeInit progress: %d/573\n", i); fflush(stdout); }
     }
     /* 如果要手动删除对象，那么一定要在对象的动画执行完了再删除，否则会有问题*/
+    printf("[LHLXW_GUI] DeInit cleaning up objects...\n"); fflush(stdout);
     lv_obj_clean(lhlxw_run->LV_LHLXW_GUI_OBJ); //删除对象的所有子项
     lv_obj_del(lhlxw_run->LV_LHLXW_GUI_OBJ); //删除对象（实测会释放内存，不会造成内存泄漏）
+    printf("[LHLXW_GUI] DeInit done\n"); fflush(stdout);
 }
