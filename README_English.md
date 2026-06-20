@@ -64,6 +64,30 @@ Like AIO firmware, this host computer insists on open source, and its open sourc
 
 ![AIO_TOOL](https://gitee.com/ClimbSnailQ/Project_Image/raw/master/OtherProject/holocubic_aio_tool.png)
 
+### PC Simulation Development Environment (No Hardware Required)
+
+The project provides a Windows desktop simulation framework that allows compiling, running, and auto-testing the firmware on PC without real ESP32 hardware.
+
+See → [Simulation Framework Tutorial](AIO_Firmware_PIO/docs/native-sim-tutorial.md)
+
+```bash
+# Build (run from any terminal, automatically uses MSYS2 MINGW64 environment)
+# Note: Replace both the MSYS2 path and platformio.exe path with your own paths
+C:\MyPrograms\msys2\msys2_shell.cmd -mingw64 -defterm -no-start -c ^
+  "cd /path/to/HoloCubic_AIO/AIO_Firmware_PIO && /c/Users/<YourUserName>/.platformio/penv/Scripts/platformio.exe run -e AIO_native_sim > build_log.txt 2>&1"
+
+# Run auto tests
+./.pio/build/AIO_native_sim/program.exe --auto-test="WebServer"
+./.pio/build/AIO_native_sim/program.exe --auto-test="Picture"
+```
+
+Features:
+- **Real FreeRTOS Kernel**: Shares the same FreeRTOS scheduler as the real firmware
+- **SDL2 Display**: 240×240 window simulating the TFT screen
+- **Keyboard Input**: Arrow keys simulate MPU6050 gesture operations
+- **Real Networking**: HTTP 8080 + FTP 21 based on Winsock2
+- **Auto Testing**: 6 test cases covering Picture/2048/Settings/WebServer/File Manager/IdeaAnim
+
 ### Precautions for startup 
 Since the small TV uses MPU6050 gyroscope accelerometer, it is necessary to keep the small TV naturally (do not hold it in hand) 3 seconds before power-on, and wait for the sensor to initialize. After initialization, the RGB light will fully light up, and then it can operate normally. Inserting or not inserting the memory card will not affect the normal boot. If there is a problem with 6050 welding, the attitude reading will be disordered after initialization (phenomenon: the application will be continuously switched). 
 
@@ -210,4 +234,4 @@ C file to extract all Chinese characters: You can use the project under the ` Sc
 * FTP reference document https://blog.csdn.net/zhubao124/article/details/81662775
 * ESP32 arduino running dual-core https://www.yiboard.com/thread-1344-1-1.html
 * Mandatory Portal Authentication https://blog.csdn.net/xh870189248/article/details/102892766
-* Thanks to the authors of the open source libraries used in the `lib 'directory 
+* Thanks to the authors of the open source libraries used in the `lib 'directory
