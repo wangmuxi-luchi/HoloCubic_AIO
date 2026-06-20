@@ -128,6 +128,7 @@ static struct {
     int target_app_index;           // 目标 APP 在 appList 中的索引
     const TestCase *current_case;
     bool case_result;
+    bool test_failed;               // 钩子超时标志：true 表示有步骤因超时失败
     int total_tests;
     int passed_tests;
 
@@ -453,6 +454,7 @@ static void start_test_case(const TestCase *tc)
     test_state.frame_counter = 0;
     test_state.nav_counter = 0;
     test_state.case_result = true;
+    test_state.test_failed = false;
     test_state.nav_first_action_sent = false;
     test_state.enter_go_sent = false;
 
@@ -719,10 +721,12 @@ void auto_test_tick(void)
                               test_state.current_step + 1, tc->step_count,
                               test_state.frame_counter);
                 } else if (timeout) {
-                    step_complete = true;
-                    LOG_WARN(AUTO_TEST_TAG, "Step %d/%d: hook timeout (%d frames), forcing advance",
-                             test_state.current_step + 1, tc->step_count,
-                             test_state.frame_counter);
+                    test_state.test_failed = true;
+                    test_state.phase = 3;
+                    LOG_ERROR(AUTO_TEST_TAG, "Step %d/%d: hook timeout (%d frames), TEST FAILED",
+                              test_state.current_step + 1, tc->step_count,
+                              test_state.frame_counter);
+                    break;
                 }
             }
 
@@ -779,7 +783,11 @@ void auto_test_tick(void)
     // Phase 3: 完成阶段
     // ============================================================
     case 3:
-        LOG_INFO(AUTO_TEST_TAG, "===== Test '%s' PASSED =====", tc->app_name);
+        if (test_state.test_failed) {
+            LOG_ERROR(AUTO_TEST_TAG, "===== Test '%s' FAILED (hook timeout) =====", tc->app_name);
+        } else {
+            LOG_INFO(AUTO_TEST_TAG, "===== Test '%s' PASSED =====", tc->app_name);
+        }
         LOG_INFO(AUTO_TEST_TAG, "Results: %d/%d passed", test_state.passed_tests, test_state.total_tests);
         test_state.running = false;
         test_state.completed = true;

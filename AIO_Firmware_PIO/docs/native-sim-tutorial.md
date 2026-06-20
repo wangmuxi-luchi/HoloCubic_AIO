@@ -224,13 +224,22 @@ set AUTO_TEST=WebServer && ./.pio/build/AIO_native_sim/program.exe
 
 ### 4.6 批量运行所有测试
 
+**Bash (Linux/macOS/Git Bash):**
 ```bash
-# 逐个运行（每次独立进程，避免状态污染）
-for test in "WebServer" "File Manager" "Picture" "2048" "Settings" "Idea"; do
+for test in "Picture" "2048" "Settings" "Idea" "WebServer" "File Manager" "LH&LXW"; do
     echo "=== Testing: $test ==="
     ./.pio/build/AIO_native_sim/program.exe --auto-test="$test"
     echo "Exit code: $?"
 done
+```
+
+**PowerShell (Windows):**
+```powershell
+foreach ($test in @("Picture","2048","Settings","Idea","WebServer","File Manager","LH&LXW")) {
+    Write-Host "=== Testing: $test ==="
+    .\.pio\build\AIO_native_sim\program.exe --auto-test="$test"
+    Write-Host "Exit code: $LASTEXITCODE`n"
+}
 ```
 
 ---

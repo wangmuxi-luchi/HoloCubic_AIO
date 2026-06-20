@@ -26,7 +26,7 @@ static void app_main_task(void *pvParameters)
     fflush(stdout);
     setup();
     g_system_ready = true;
-    printf("[SIM] setup() complete, entering loop()...\n");
+    printf("[SIM] setup() complete, entering AppCtrl loop...\n");
     fflush(stdout);
     for (;;) {
         loop();

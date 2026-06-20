@@ -22,6 +22,12 @@
 #include <esp32-hal.h>
 #include <esp32-hal-timer.h>
 
+// 阶段2: 多任务重构
+#include <FreeRTOS.h>
+#include <task.h>
+#include <queue.h>
+QueueHandle_t g_action_queue = NULL;
+
 bool isCheckAction = false;
 
 /*** Component objects **7*/
@@ -43,8 +49,12 @@ void TaskLvglUpdate(void *parameter)
 TimerHandle_t xTimerAction = NULL;
 void actionCheckHandle(TimerHandle_t xTimer)
 {
-    // 标志需要检测动作
-    isCheckAction = true;
+    // 阶段2: 投递动作检测请求到队列（替代布尔标志位）
+    if (g_action_queue) {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        int action_flag = 1;
+        xQueueSendFromISR(g_action_queue, &action_flag, &xHigherPriorityTaskWoken);
+    }
 }
 
 void my_print(const char *buf)
@@ -56,6 +66,12 @@ void my_print(const char *buf)
 void setup()
 {
     Serial.begin(115200);
+
+    // 阶段2: 创建动作队列（定时器 → AppCtrl 任务通信通道）
+    g_action_queue = xQueueCreate(10, sizeof(int));
+    if (!g_action_queue) {
+        Serial.println(F("[SETUP] FATAL: Failed to create action queue!"));
+    }
 
     Serial.println(F("\nAIO (All in one) version " AIO_VERSION "\n"));
     Serial.flush();
@@ -125,22 +141,23 @@ void setup()
     Serial.printf("[SETUP] Step 5: app_controller->init()...\n");
     Serial.flush();
 
-    // Update display in parallel thread.
-    // BaseType_t taskLvglReturned = xTaskCreate(
-    //     TaskLvglUpdate,
-    //     "LvglThread",
-    //     8 * 1024,
-    //     nullptr,
-    //     TASK_LVGL_PRIORITY,
-    //     &handleTaskLvgl);
-    // if (taskLvglReturned != pdPASS)
-    // {
-    //     Serial.println("taskLvglReturned != pdPASS");
-    // }
-    // else
-    // {
-    //     Serial.println("taskLvglReturned == pdPASS");
-    // }
+    // 阶段2: 启用 LVGL 独立渲染任务（高优先级，5ms 周期）
+    // 与 TaskAppCtrl 并行运行，避免 APP 阻塞导致 UI 冻结
+    BaseType_t taskLvglReturned = xTaskCreate(
+        TaskLvglUpdate,
+        "LvglThread",
+        4 * 1024,
+        nullptr,
+        TASK_LVGL_PRIORITY,
+        &handleTaskLvgl);
+    if (taskLvglReturned != pdPASS)
+    {
+        Serial.println("taskLvglReturned != pdPASS");
+    }
+    else
+    {
+        Serial.println("taskLvglReturned == pdPASS");
+    }
 
 #if LV_USE_LOG
     lv_log_register_print_cb(my_print);
@@ -256,7 +273,7 @@ void loop()
         Serial.printf("[LOOP] frame=%lu\n", loop_count);
     }
 
-    screen.routine();
+    // 阶段2: screen.routine() 已移除，LVGL 渲染由独立的 TaskLvgl 任务处理
 
 #ifdef PEAK
     // 适配稚晖君的PEAK
@@ -272,9 +289,10 @@ void loop()
         }
     }
 #endif
-    if (isCheckAction)
+    // 阶段2: 从队列接收动作检测请求（替代布尔标志位轮询）
+    int action_flag;
+    if (g_action_queue && xQueueReceive(g_action_queue, &action_flag, 0) == pdTRUE)
     {
-        isCheckAction = false;
         act_info = mpu.getAction();
     }
     app_controller->main_process(act_info); // 运行当前进程
