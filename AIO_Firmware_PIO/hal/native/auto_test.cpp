@@ -26,6 +26,9 @@ enum HookType {
     HOOK_ENTER,         // 进入钩子：等待 app_exit_flag 变为 1
     HOOK_EXIT,          // 退出钩子：等待 app_exit_flag 变为 0
     HOOK_LOADING,       // 加载钩子：等待 JPG 解码完成，frame_delay 为超时
+    HOOK_HTTP_READY,    // HTTP 服务器就绪：等待 localhost:80 可连接
+    HOOK_FTP_READY,     // FTP 服务器就绪：等待 localhost:21 可连接
+    HOOK_SERVER_READY,  // 服务器路由就绪：等待 start_web_config() 完成
 };
 
 // isCheckAction 的外部声明（HoloCubic_AIO.cpp 中定义）
@@ -70,6 +73,18 @@ static void get_timestamp(char *buf, size_t bufsize)
     printf("[%s] [ERROR] [%s] %s:%d: " fmt "\n", _ts, tag, __FILE__, __LINE__, ##__VA_ARGS__); \
     fflush(stdout); \
 } while(0)
+
+// ========================
+// 服务器路由就绪标志（由 server.cpp 通过 hal_native_server_routes_ready() 设置）
+// ========================
+
+static bool g_server_routes_ready = false;
+
+extern "C" void hal_native_server_routes_ready(void)
+{
+    g_server_routes_ready = true;
+    LOG_INFO(AUTO_TEST_TAG, "Server routes ready signal received");
+}
 
 // ========================
 // 测试步骤与用例结构
@@ -164,15 +179,34 @@ static const TestStep settings_steps[] = {
     {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
 };
 
+// Server APP 测试（HTTP 服务器）
+static const TestStep server_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},        // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_SERVER_READY}, // 等待路由注册完成
+    {3000, AUTO_ACTION_NONE,       HOOK_HTTP_READY},   // 等待 HTTP:80 就绪
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},         // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},         // 等待退出
+};
+
+// File Manager APP 测试（FTP 服务器）
+static const TestStep file_manager_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},     // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_FTP_READY}, // 等待 FTP:21 就绪
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},      // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
+};
+
 // ========================
 // 测试用例注册表
 // ========================
 
 static const TestCase test_cases[] = {
-    {"Picture",       0,  picture_steps,    9, 20},
-    {"2048",          4,  game_2048_steps,  11, 20},
-    {"Settings",      3,  settings_steps,    9, 20},
-    {"Idea",          4,  NULL,             0, 20},
+    {"Picture",       0,  picture_steps,      9, 20},
+    {"2048",          4,  game_2048_steps,   11, 20},
+    {"Settings",      3,  settings_steps,     9, 20},
+    {"Idea",          4,  NULL,               0, 20},
+    {"WebServer",     0,  server_steps,       5, 20},
+    {"File Manager",  0,  file_manager_steps, 4, 20},
 };
 
 static const int test_case_count = sizeof(test_cases) / sizeof(test_cases[0]);
@@ -224,16 +258,124 @@ static bool hook_loading_check(void)
     return (hal_native_is_jpg_decode_done() != 0);
 }
 
+// 检查服务器路由是否已注册
+static bool hook_server_ready_check(void)
+{
+    return g_server_routes_ready;
+}
+
+// 检查 HTTP 服务器是否就绪（localhost:80 可连接）
+static bool hook_http_ready_check(void)
+{
+    static SOCKET sock = INVALID_SOCKET;
+    static int attempt = 0;
+    static bool request_sent = false;
+    attempt++;
+
+    if (sock == INVALID_SOCKET) {
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) return false;
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(8080);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        u_long mode = 1;
+        ioctlsocket(sock, FIONBIO, &mode);
+        int ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+        if (ret == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (err != WSAEWOULDBLOCK) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                return false;
+            }
+        }
+        request_sent = false;
+        return false;
+    }
+
+    if (!request_sent) {
+        const char *req = "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n";
+        send(sock, req, (int)strlen(req), 0);
+        request_sent = true;
+        return false;
+    }
+
+    char buf[256] = {0};
+    int len = recv(sock, buf, sizeof(buf) - 1, 0);
+    if (len > 0) {
+        LOG_INFO(AUTO_TEST_TAG, "HTTP:80 response: %.200s", buf);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        return true;
+    }
+    if (attempt > 3000) {
+        LOG_WARN(AUTO_TEST_TAG, "HTTP:80 timeout after %d attempts", attempt);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        return true;
+    }
+    return false;
+}
+
+// 检查 FTP 服务器是否就绪（localhost:21 可连接）
+static bool hook_ftp_ready_check(void)
+{
+    static SOCKET sock = INVALID_SOCKET;
+    static int attempt = 0;
+    attempt++;
+
+    if (sock == INVALID_SOCKET) {
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) return false;
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(21);
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        u_long mode = 1;
+        ioctlsocket(sock, FIONBIO, &mode);
+        int ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+        if (ret == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (err != WSAEWOULDBLOCK) {
+                closesocket(sock);
+                sock = INVALID_SOCKET;
+                return false;
+            }
+        }
+        return false;
+    }
+
+    char buf[256] = {0};
+    int len = recv(sock, buf, sizeof(buf) - 1, 0);
+    if (len > 0) {
+        LOG_INFO(AUTO_TEST_TAG, "FTP:21 banner: %.200s", buf);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        return true;
+    }
+    if (attempt > 3000) {
+        LOG_WARN(AUTO_TEST_TAG, "FTP:21 timeout after %d attempts", attempt);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        return true;
+    }
+    return false;
+}
+
 // 根据钩子类型检查完成条件
 static bool check_hook(int hook_type)
 {
     switch (hook_type) {
-    case HOOK_NAV:     return hook_nav_check();
-    case HOOK_ENTER:   return hook_enter_check();
-    case HOOK_EXIT:    return hook_exit_check();
-    case HOOK_LOADING: return hook_loading_check();
+    case HOOK_NAV:        return hook_nav_check();
+    case HOOK_ENTER:      return hook_enter_check();
+    case HOOK_EXIT:       return hook_exit_check();
+    case HOOK_LOADING:    return hook_loading_check();
+    case HOOK_HTTP_READY: return hook_http_ready_check();
+    case HOOK_FTP_READY:  return hook_ftp_ready_check();
+    case HOOK_SERVER_READY: return hook_server_ready_check();
     case HOOK_NONE:
-    default:           return false;
+    default:              return false;
     }
 }
 
@@ -336,7 +478,7 @@ void auto_test_tick(void)
         const TestCase *tc = find_test_case(test_state.target_app);
         if (!tc) {
             LOG_ERROR(AUTO_TEST_TAG, "No test case found for '%s'", test_state.target_app);
-            LOG_ERROR(AUTO_TEST_TAG, "Available: Picture, 2048, Settings");
+            LOG_ERROR(AUTO_TEST_TAG, "Available: Picture, 2048, Settings, WebServer, File Manager");
             test_state.running = true;
             return;
         }

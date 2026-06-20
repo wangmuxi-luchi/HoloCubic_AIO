@@ -33,7 +33,7 @@ void Display::routine()
 {
     static unsigned long routine_count = 0;
     routine_count++;
-    if (routine_count % 100 == 0) {
+    if (routine_count % 1000 == 0) {
         printf("[DISP] routine() frame=%lu\n", routine_count);
     }
     AIO_LVGL_OPERATE_LOCK(lv_timer_handler());
@@ -89,10 +89,6 @@ void Ambient::init(int mode)
 }
 
 // ==================== SdCard ====================
-
-extern "C" {
-    __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void* hModule, char* lpFilename, unsigned long nSize);
-}
 
 static char g_sdBasePath[512] = "";
 
@@ -209,6 +205,25 @@ File_Info *SdCard::listDir(const char *dirname)
 
     printf("[SDCARD] listDir found %d files\n", file_count);
     return head_file;
+}
+
+boolean SdCard::deleteFile(const String &path)
+{
+    char nativePath[512];
+    toNativePath(path.c_str(), nativePath, sizeof(nativePath));
+    printf("[SDCARD] deleteFile(%s)\n", nativePath);
+    return remove(nativePath) == 0;
+}
+
+File SdCard::open(const String &path, const char *mode)
+{
+    return File(path.c_str(), mode);
+}
+
+// ==================== Stub for LHLXW emoji (excluded) ====================
+void emoji_process(lv_obj_t *ym)
+{
+    (void)ym;
 }
 
 // ==================== IMU ====================

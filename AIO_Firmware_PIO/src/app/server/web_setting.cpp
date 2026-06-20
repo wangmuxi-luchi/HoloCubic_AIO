@@ -134,7 +134,8 @@ void init_page_header()
     webpage_header = F("<!DOCTYPE html><html>");
     webpage_header += F("<head>");
     webpage_header += F("<title>HoloCubic WebServer</title>"); // NOTE: 1em = 16px
-    webpage_header += F("<meta http-equiv='Content-Type' name='viewport' content='user-scalable=yes,initial-scale=1.0,width=device-width; text/html; charset=utf-8' />");
+    webpage_header += F("<meta name='viewport' content='width=device-width, initial-scale=1.0' />");
+    webpage_header += F("<meta http-equiv='Content-Type' content='text/html; charset=utf-8' />");
     webpage_header += F("<style>");
     webpage_header += F(SETING_CSS);
     webpage_header += F("body{max-width:65%;margin:0 auto;font-family:arial;font-size:105%;text-align:center;color:blue;background-color:#dbdadb;}");

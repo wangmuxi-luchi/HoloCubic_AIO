@@ -106,6 +106,11 @@ public:
     int toInt() const { return atoi(_str.c_str()); }
     float toFloat() const { return (float)atof(_str.c_str()); }
 
+    std::string::iterator begin() { return _str.begin(); }
+    std::string::const_iterator begin() const { return _str.begin(); }
+    std::string::iterator end() { return _str.end(); }
+    std::string::const_iterator end() const { return _str.end(); }
+
     String &operator=(const char *cstr) { _str = cstr ? cstr : ""; return *this; }
     String &operator=(const String &s) { _str = s._str; return *this; }
     String &operator+=(const char *cstr) { _str += cstr; return *this; }
@@ -126,6 +131,8 @@ public:
     bool operator==(const String &s) const { return _str == s._str; }
     bool operator!=(const char *cstr) const { return !(*this == cstr); }
     bool operator!=(const String &s) const { return !(*this == s); }
+    bool operator<(const String &s) const { return _str < s._str; }
+    bool operator>(const String &s) const { return _str > s._str; }
 
     char operator[](int index) const { return _str[index]; }
     char &operator[](int index) { return _str[index]; }

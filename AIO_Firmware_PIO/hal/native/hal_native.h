@@ -62,6 +62,10 @@ void hal_native_auto_test_hook(void);
 // 返回 1 表示自上次查询以来有新的解码完成，读取后自动清零
 int hal_native_is_jpg_decode_done(void);
 
+// 通知 auto_test 框架：服务器路由已注册完毕
+// 由 server.cpp 在 start_web_config() 之后调用
+void hal_native_server_routes_ready(void);
+
 #ifdef __cplusplus
 }
 #endif

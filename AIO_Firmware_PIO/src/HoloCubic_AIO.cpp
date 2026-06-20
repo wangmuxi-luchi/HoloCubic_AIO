@@ -252,7 +252,7 @@ void loop()
 {
     static unsigned long loop_count = 0;
     loop_count++;
-    if (loop_count % 100 == 0) {
+    if (loop_count % 1000 == 0) {
         Serial.printf("[LOOP] frame=%lu\n", loop_count);
     }
 
