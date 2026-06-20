@@ -20,7 +20,11 @@ unsigned long micros(void)
 
 void delay(unsigned long ms)
 {
-    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+    auto start = std::chrono::steady_clock::now();
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - start).count() < (long long)ms) {
+        std::this_thread::yield();
+    }
 }
 
 void delayMicroseconds(unsigned int us)

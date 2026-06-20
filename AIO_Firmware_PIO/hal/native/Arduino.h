@@ -22,8 +22,6 @@ typedef uint16_t word;
 #define HIGH 0x1
 #define LOW  0x0
 
-typedef bool boolean;
-
 #define FILE_READ  "rb"
 #define FILE_WRITE "wb"
 #define FILE_APPEND "a"

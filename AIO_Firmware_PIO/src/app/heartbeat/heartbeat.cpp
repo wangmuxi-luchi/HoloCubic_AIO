@@ -156,6 +156,7 @@ static void read_config(HeartbeatAppForeverData *cfg)
 void HeartbeatAppForeverData::mqtt_reconnect()
 {
     Serial.print("Attempting MQTT connection...\n");
+    printf("[DEBUG] mqtt_reconnect: mqtt_client=%p\n", (void*)mqtt_client); fflush(stdout);
     if (NULL == mqtt_client)
     {
         Serial.print("MQTT Client Error!\n");
@@ -173,6 +174,7 @@ void HeartbeatAppForeverData::mqtt_reconnect()
     {
         Serial.printf("failed, rc=%d\n", mqtt_client->state());
     }
+    Serial.println("[DEBUG] mqtt_reconnect() done");
 }
 
 // 动态数据，APP的生命周期结束也需要释放它
