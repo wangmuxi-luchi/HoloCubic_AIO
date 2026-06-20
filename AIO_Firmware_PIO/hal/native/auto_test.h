@@ -16,6 +16,9 @@ bool auto_test_is_running(void);
 // 获取当前测试目标名称
 const char *auto_test_get_target(void);
 
+// 系统就绪标志：setup() 完成后由 sim_main.cpp 置 true
+extern bool g_system_ready;
+
 // ========================
 // 各 APP 测试接口（C++）
 // ========================

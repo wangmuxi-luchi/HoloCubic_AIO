@@ -7,6 +7,10 @@
 #include <stdarg.h>
 #include <time.h>
 
+// 直接设置 act_info->active，绕过主循环阻塞问题
+// LHLXW 等 APP 的 process 函数有 while(1) 死循环，主循环无法更新 act_info
+extern ImuAction *act_info;
+
 // 动作类型枚举，与 hal_display.c 中的 hal_action_t 保持一致
 enum {
     AUTO_ACTION_NONE = 0,
@@ -29,6 +33,8 @@ enum HookType {
     HOOK_HTTP_READY,    // HTTP 服务器就绪：等待 localhost:80 可连接
     HOOK_FTP_READY,     // FTP 服务器就绪：等待 localhost:21 可连接
     HOOK_SERVER_READY,  // 服务器路由就绪：等待 start_web_config() 完成
+    HOOK_LHLXW_SUBAPP_RUNNING,  // LHLXW 子应用运行中：等待 hal_lhlxw_subapp_running=true
+    HOOK_LHLXW_SUBAPP_EXITED,   // LHLXW 子应用已退出：等待 hal_lhlxw_subapp_running=false
 };
 
 // isCheckAction 的外部声明（HoloCubic_AIO.cpp 中定义）
@@ -94,6 +100,7 @@ struct TestStep {
     int frame_delay;   // 最大等待帧数 / 超时帧数（约 1ms/帧）
     int action;        // 注入的动作
     int hook_type;     // 等待的完成信号类型（HookType 枚举）
+    bool direct_only;  // true: 只设置 act_info->active，不注入 g_last_action（用于子应用退出）
 };
 
 struct TestCase {
@@ -196,6 +203,45 @@ static const TestStep file_manager_steps[] = {
     {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
 };
 
+// LHLXW APP 测试：等 init → 轮流进入 3 个子应用(cyber/heartbeat/codeRain) → 退出
+// eye(option 0)有递归问题跳过，emoji(option 4)依赖SD卡文件暂不支持仿真跳过
+// 每个子应用: TURN_RIGHT切换选项 → UP进入 → 钩子确认运行 → 运行 → RETURN退出 → 钩子确认退出
+// 使用 HOOK_LHLXW_SUBAPP_RUNNING 动态验证子应用启动，HOOK_LHLXW_SUBAPP_EXITED 验证子应用退出
+// 不再依赖帧计数盲目等待，而是通过钩子信号动态检查通过条件
+static const TestStep LHLXW_steps[] = {
+    // Step 0: 等待 app_init + startLog 动画完成
+    {600,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    // Step 1-3: 切换到 cyber(option 1) 并进入（TURN_RIGHT后等30帧让LHLXW消费动作）
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    // Step 4-5: 运行 cyber 后退出，钩子验证退出
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    // Step 6: 等待退出完成
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    // Step 7-9: 切换到 heartbeat(option 2) 并进入
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    // Step 10-11: 运行 heartbeat 后退出
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    // Step 12: 等待退出完成
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    // Step 13-15: 切换到 codeRain(option 3) 并进入
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    // Step 16-17: 运行 codeRain 后退出
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {2000, AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    // Step 18: 等待退出完成
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    // Step 19: 退出 LHLXW（emoji option 4 跳过，直接从 codeRain 退出）
+    {500,  AUTO_ACTION_RETURN,     HOOK_EXIT,  false},
+};
+
 // ========================
 // 测试用例注册表
 // ========================
@@ -207,6 +253,7 @@ static const TestCase test_cases[] = {
     {"Idea",          4,  NULL,               0, 20},
     {"WebServer",     0,  server_steps,       5, 20},
     {"File Manager",  0,  file_manager_steps, 4, 20},
+    {"LH&LXW",        0,  LHLXW_steps,       20, 20},
 };
 
 static const int test_case_count = sizeof(test_cases) / sizeof(test_cases[0]);
@@ -363,19 +410,35 @@ static bool hook_ftp_ready_check(void)
     return false;
 }
 
+// LHLXW 子应用运行中钩子：等待 hal_lhlxw_subapp_running 变为 true
+// 用于验证 UP 后子应用确实启动了
+static bool hook_lhlxw_subapp_running_check(void)
+{
+    return hal_lhlxw_subapp_running;
+}
+
+// LHLXW 子应用已退出钩子：等待 hal_lhlxw_subapp_running 变为 false
+// 用于验证 RETURN 后子应用确实退出了
+static bool hook_lhlxw_subapp_exited_check(void)
+{
+    return !hal_lhlxw_subapp_running;
+}
+
 // 根据钩子类型检查完成条件
 static bool check_hook(int hook_type)
 {
     switch (hook_type) {
-    case HOOK_NAV:        return hook_nav_check();
-    case HOOK_ENTER:      return hook_enter_check();
-    case HOOK_EXIT:       return hook_exit_check();
-    case HOOK_LOADING:    return hook_loading_check();
-    case HOOK_HTTP_READY: return hook_http_ready_check();
-    case HOOK_FTP_READY:  return hook_ftp_ready_check();
-    case HOOK_SERVER_READY: return hook_server_ready_check();
+    case HOOK_NAV:                 return hook_nav_check();
+    case HOOK_ENTER:               return hook_enter_check();
+    case HOOK_EXIT:                return hook_exit_check();
+    case HOOK_LOADING:             return hook_loading_check();
+    case HOOK_HTTP_READY:          return hook_http_ready_check();
+    case HOOK_FTP_READY:           return hook_ftp_ready_check();
+    case HOOK_SERVER_READY:        return hook_server_ready_check();
+    case HOOK_LHLXW_SUBAPP_RUNNING: return hook_lhlxw_subapp_running_check();
+    case HOOK_LHLXW_SUBAPP_EXITED:  return hook_lhlxw_subapp_exited_check();
     case HOOK_NONE:
-    default:              return false;
+    default:                       return false;
     }
 }
 
@@ -469,10 +532,24 @@ void auto_test_init(int argc, char *argv[])
     }
 }
 
+// ========================
+// 弱函数覆盖：hal_native_auto_test_hook
+// 由 auto_test_thread 定时调用，不依赖 FreeRTOS 调度
+// 这样即使 APP 的 process 函数有 while(1) 死循环也能注入动作
+// ========================
+
+extern "C" void hal_native_auto_test_hook(void)
+{
+    auto_test_tick();
+}
+
 void auto_test_tick(void)
 {
     if (!test_state.inited) return;
     if (!test_state.target_app) return;
+    // 等待系统就绪：app_controller 初始化完成 + setup() 完成
+    if (!g_system_ready) return;
+    if (!app_controller || app_controller->getAppIdxByName(test_state.target_app) < 0) return;
 
     if (!test_state.running && !test_state.completed) {
         const TestCase *tc = find_test_case(test_state.target_app);
@@ -605,6 +682,27 @@ void auto_test_tick(void)
             const TestStep *step = &tc->steps[test_state.current_step];
             test_state.frame_counter++;
 
+            // 钩子类步骤：首帧立即注入动作，然后等待钩子触发
+            // HOOK_NONE 步骤：等待 frame_delay 帧后再注入动作
+            if (test_state.frame_counter == 1
+                && step->hook_type != HOOK_NONE
+                && step->action != AUTO_ACTION_NONE) {
+                hal_native_inject_action(step->action);
+                if (act_info) {
+                    switch (step->action) {
+                        case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
+                        case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
+                        case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
+                        case AUTO_ACTION_UP:         act_info->active = UP;         break;
+                        case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
+                        case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
+                        case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
+                    }
+                }
+                LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d (injected, waiting for hook)",
+                          test_state.current_step + 1, tc->step_count, step->action);
+            }
+
             bool step_complete = false;
 
             if (step->hook_type == HOOK_NONE) {
@@ -630,10 +728,42 @@ void auto_test_tick(void)
 
             if (step_complete) {
                 test_state.frame_counter = 0;
-                if (step->action != AUTO_ACTION_NONE) {
-                    hal_native_inject_action(step->action);
-                    LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d",
-                              test_state.current_step + 1, tc->step_count, step->action);
+                // HOOK_NONE 步骤在完成时注入动作（延迟注入模式）
+                // 钩子类步骤已在首帧注入，这里只处理 HOOK_NONE
+                if (step->hook_type == HOOK_NONE && step->action != AUTO_ACTION_NONE) {
+                    if (step->direct_only) {
+                        // direct_only: 只设置 act_info->active，不注入 g_last_action
+                        // 用于子应用退出：子应用的 while(1) 循环直接读 act_info->active
+                        // 避免 g_last_action 残留导致外层 process 误读
+                        if (act_info) {
+                            switch (step->action) {
+                                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
+                                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
+                                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
+                                case AUTO_ACTION_UP:         act_info->active = UP;         break;
+                                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
+                                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
+                                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
+                            }
+                        }
+                        LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d (direct_only, act_info only)",
+                                  test_state.current_step + 1, tc->step_count, step->action);
+                    } else {
+                        hal_native_inject_action(step->action);
+                        if (act_info) {
+                            switch (step->action) {
+                                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
+                                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
+                                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
+                                case AUTO_ACTION_UP:         act_info->active = UP;         break;
+                                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
+                                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
+                                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
+                            }
+                        }
+                        LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d",
+                                  test_state.current_step + 1, tc->step_count, step->action);
+                    }
                 }
                 test_state.current_step++;
             }
@@ -664,7 +794,7 @@ void auto_test_tick(void)
         test_state.frame_counter++;
         if (test_state.frame_counter >= 30) {
             LOG_INFO(AUTO_TEST_TAG, "Auto-test complete, exiting...");
-            exit(0);
+            _exit(0);
         }
         break;
     }
@@ -678,14 +808,6 @@ bool auto_test_is_running(void)
 const char *auto_test_get_target(void)
 {
     return test_state.target_app;
-}
-
-// ========================
-// 弱函数覆盖：hal_native_auto_test_hook
-// ========================
-extern "C" void hal_native_auto_test_hook(void)
-{
-    auto_test_tick();
 }
 
 // ========================
@@ -735,4 +857,12 @@ bool auto_test_app_game_snake(void)  { LOG_WARN(AUTO_TEST_TAG, "GameSnake test n
 bool auto_test_app_bilibili(void)    { LOG_WARN(AUTO_TEST_TAG, "Bilibili test not implemented"); return false; }
 bool auto_test_app_pc_resource(void) { LOG_WARN(AUTO_TEST_TAG, "PCResource test not implemented"); return false; }
 bool auto_test_app_file_manager(void){ LOG_WARN(AUTO_TEST_TAG, "FileManager test not implemented"); return false; }
-bool auto_test_app_LHLXW(void)       { LOG_WARN(AUTO_TEST_TAG, "LHLXW test not implemented"); return false; }
+bool auto_test_app_LHLXW(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running LHLXW app test...");
+    const TestCase *tc = find_test_case("LH&LXW");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}

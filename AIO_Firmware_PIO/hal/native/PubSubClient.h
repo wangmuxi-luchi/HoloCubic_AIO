@@ -113,8 +113,8 @@ public:
     boolean setBufferSize(uint16_t) { return true; }
     uint16_t getBufferSize() { return 0; }
 
-    boolean connect(const char*) { return false; }
-    boolean connect(const char*, const char*, const char*) { return false; }
+    boolean connect(const char*) { fprintf(stderr, "[PubSubClient] connect(1arg)\n"); fflush(stderr); return false; }
+    boolean connect(const char*, const char*, const char*) { fprintf(stderr, "[PubSubClient] connect(3arg)\n"); fflush(stderr); return false; }
     boolean connect(const char*, const char*, uint8_t, boolean, const char*) { return false; }
     boolean connect(const char*, const char*, const char*, const char*, uint8_t, boolean, const char*) { return false; }
     boolean connect(const char*, const char*, const char*, const char*, uint8_t, boolean, const char*, boolean) { return false; }
@@ -132,8 +132,8 @@ public:
     boolean subscribe(const char*) { return false; }
     boolean subscribe(const char*, uint8_t) { return false; }
     boolean unsubscribe(const char*) { return false; }
-    boolean loop() { return false; }
-    boolean connected() { return false; }
+    boolean loop() { fprintf(stderr, "[PubSubClient] loop()\n"); fflush(stderr); return false; }
+    boolean connected() { fprintf(stderr, "[PubSubClient] connected()\n"); fflush(stderr); return false; }
     int state() { return _state; }
 };
 
