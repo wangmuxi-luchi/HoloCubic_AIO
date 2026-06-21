@@ -2,6 +2,7 @@
 #include "stockmarket_gui.h"
 #include "sys/app_controller.h"
 #include "../../common.h"
+#include "network_async.h"
 
 // STOCKmarket的持久化配置
 #define B_CONFIG_PATH "/stockmarket.cfg"
@@ -58,6 +59,7 @@ struct MyHttpResult
 
 static B_Config cfg_data;
 static StockmarketAppRunData *run_data = NULL;
+static HttpRequest *g_stock_req = NULL;
 
 static MyHttpResult http_request(String uid = "sh601126")
 {
@@ -113,29 +115,57 @@ static int stockmarket_init(AppController *sys)
     run_data->refresh_time_millis = GET_SYS_MILLIS() - cfg_data.updataInterval;
 
     display_stockmarket(run_data->stockdata, LV_SCR_LOAD_ANIM_NONE);
+    APP_OBJ *app = sys->getAppByName(STOCK_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = cfg_data.updataInterval;
+    }
     return 0;
 }
+
+static void update_stock_data_from_response(const String &payload);
 
 static void stockmarket_process(AppController *sys,
                                 const ImuAction *act_info)
 {
-    lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_FADE_ON;
     if (RETURN == act_info->active)
     {
         sys->send_to(STOCK_APP_NAME, CTRL_NAME,
                      APP_MESSAGE_WIFI_DISCONN, NULL, NULL);
-        sys->app_exit(); // 退出APP
+        sys->app_exit();
+        return;
+    }
+
+    // 异步 HTTP 响应就绪 → 解析并显示
+    if (g_stock_req && g_stock_req->done)
+    {
+        Serial.printf("[STOCK_PROC] HTTP response ready, http_code=%d\n", g_stock_req->http_code);
+        __sync_synchronize();
+        String payload = String(g_stock_req->response);
+        if (g_stock_req->http_code > 0 && payload.length() > 0)
+        {
+            update_stock_data_from_response(payload);
+            display_stockmarket(run_data->stockdata, LV_SCR_LOAD_ANIM_NONE);
+        }
+        else
+        {
+            Serial.println("[HTTP] ERROR");
+        }
+        vPortFree(g_stock_req);
+        g_stock_req = NULL;
         return;
     }
 
     // 以下减少网络请求的压力
     if (doDelayMillisTime(cfg_data.updataInterval, &run_data->refresh_time_millis, false))
     {
-        sys->send_to(STOCK_APP_NAME, CTRL_NAME,
-                     APP_MESSAGE_WIFI_CONN, NULL, NULL);
+        if (g_stock_req == NULL)
+        {
+            Serial.printf("[STOCK_PROC] request: %s\n", cfg_data.stock_id.c_str());
+            String url = "http://hq.sinajs.cn/list=" + cfg_data.stock_id;
+            g_stock_req = http_get_async(url.c_str(), xTaskGetCurrentTaskHandle(),
+                                          "referer: https://finance.sina.com.cn");
+        }
     }
-
-    delay(300);
 }
 
 static void stockmarket_background_task(AppController *sys,
@@ -149,13 +179,85 @@ static int stockmarket_exit_callback(void *param)
 {
     stockmarket_gui_del();
 
-    // 释放运行数据
+    if (g_stock_req)
+    {
+        g_stock_req->orphaned = true;
+        g_stock_req = NULL;
+    }
+
     if (NULL != run_data)
     {
         free(run_data);
         run_data = NULL;
     }
     return 0;
+}
+
+static void update_stock_data_from_response(const String &payload)
+{
+    if (payload.length() == 0)
+    {
+        Serial.println("[STOCK] Empty response, skip parse");
+        return;
+    }
+
+    int stockNameStart = payload.indexOf('"') + 1;
+    int stockNameEnd = payload.indexOf(',');
+    String Stockname = payload.substring(stockNameStart, stockNameEnd);
+
+    Serial.printf("[STOCK] name=%s\n", Stockname.c_str());
+
+    int startIndex_1 = payload.indexOf(',') + 1;
+    int endIndex_1 = payload.indexOf(',', startIndex_1);
+    int startIndex_2 = payload.indexOf(',', endIndex_1) + 1;
+    int endIndex_2 = payload.indexOf(',', startIndex_2);
+    int startIndex_3 = payload.indexOf(',', endIndex_2) + 1;
+    int endIndex_3 = payload.indexOf(',', startIndex_3);
+    int startIndex_4 = payload.indexOf(',', endIndex_3) + 1;
+    int endIndex_4 = payload.indexOf(',', startIndex_4);
+    int startIndex_5 = payload.indexOf(',', endIndex_4) + 1;
+    int endIndex_5 = payload.indexOf(',', startIndex_5);
+    memset(run_data->stockdata.name, '\0', 9);
+    int nameLen = Stockname.length();
+    if (nameLen > 8) nameLen = 8;
+    for (int i = 0; i < nameLen; i++)
+        run_data->stockdata.name[i] = Stockname.charAt(i);
+    run_data->stockdata.name[8] = '\0';
+    run_data->stockdata.OpenQuo = payload.substring(startIndex_1, endIndex_1).toFloat();
+    run_data->stockdata.CloseQuo = payload.substring(startIndex_2, endIndex_2).toFloat();
+    run_data->stockdata.NowQuo = payload.substring(startIndex_3, endIndex_3).toFloat();
+    run_data->stockdata.MaxQuo = payload.substring(startIndex_4, endIndex_4).toFloat();
+    run_data->stockdata.MinQuo = payload.substring(startIndex_5, endIndex_5).toFloat();
+
+    run_data->stockdata.ChgValue = run_data->stockdata.NowQuo - run_data->stockdata.CloseQuo;
+    run_data->stockdata.ChgPercent = run_data->stockdata.ChgValue / run_data->stockdata.CloseQuo * 100;
+    for (int i = 0; i < 8; i++)
+        run_data->stockdata.code[i] = cfg_data.stock_id.charAt(i);
+
+    if (run_data->stockdata.ChgValue >= 0)
+    {
+        run_data->stockdata.updownflag = 1;
+    }
+    else
+    {
+        run_data->stockdata.updownflag = 0;
+    }
+    int startIndex_6 = payload.indexOf(',', endIndex_5) + 1;
+    int endIndex_6 = payload.indexOf(',', startIndex_6);
+    int startIndex_7 = payload.indexOf(',', endIndex_6) + 1;
+    int endIndex_7 = payload.indexOf(',', startIndex_7);
+    int startIndex_8 = payload.indexOf(',', endIndex_7) + 1;
+    int endIndex_8 = payload.indexOf(',', startIndex_8);
+    int startIndex_9 = payload.indexOf(',', endIndex_8) + 1;
+    int endIndex_9 = payload.indexOf(',', startIndex_9);
+    run_data->stockdata.tradvolume = payload.substring(startIndex_8, endIndex_8).toFloat();
+    run_data->stockdata.turnover = payload.substring(startIndex_9, endIndex_9).toFloat();
+
+    Serial.printf("[STOCK] parsed: Open=%.2f Close=%.2f Now=%.2f High=%.2f Low=%.2f Chg=%.2f%% Vol=%.0f\n",
+                  run_data->stockdata.OpenQuo, run_data->stockdata.CloseQuo,
+                  run_data->stockdata.NowQuo, run_data->stockdata.MaxQuo,
+                  run_data->stockdata.MinQuo, run_data->stockdata.ChgPercent,
+                  run_data->stockdata.tradvolume);
 }
 
 static void update_stock_data()
@@ -253,14 +355,6 @@ static void stockmarket_message_handle(const char *from, const char *to,
 {
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        Serial.print(GET_SYS_MILLIS());
-        Serial.println("[SYS] stockmarket_event_notification");
-        update_stock_data();
-        display_stockmarket(run_data->stockdata, LV_SCR_LOAD_ANIM_NONE);
-    }
-    break;
     case APP_MESSAGE_UPDATE_TIME:
     {
     }

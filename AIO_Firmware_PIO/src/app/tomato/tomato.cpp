@@ -51,7 +51,6 @@ static int tomato_init(AppController *sys)
     run_data->rgb_fast_update = 0;
     run_data->switch_count = 0;
     run_data->lastAct = UNKNOWN;
-    // run_data->count_down_init = 0;
 
     run_data->rgb_cfg.mode = 1;
     run_data->rgb_cfg.min_value_0 = 1;
@@ -74,6 +73,12 @@ static int tomato_init(AppController *sys)
                              run_data->rgb_cfg.step_0, run_data->rgb_cfg.step_1, run_data->rgb_cfg.step_2,
                              run_data->rgb_cfg.min_brightness, run_data->rgb_cfg.max_brightness,
                              run_data->rgb_cfg.brightness_step, run_data->rgb_cfg.time};
+    APP_OBJ *app = sys->getAppByName(TOMATO_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 333;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
     return 0;
 }
 static void time_switch()
@@ -220,7 +225,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
     static int count_down_reset = ON;
     if (!hadOpened)
     {
-        delay(750);
         run_data->time_start = millis();
         hadOpened = true;
     }
@@ -307,7 +311,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
                         if (run_data->time_mode >= -1 && run_data->time_mode <= 2)
                         {
                             run_data->t_start.minute = 5;
-                            delay(50);
                             run_data->time_start = millis();
                         }
                     }
@@ -318,7 +321,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
                         if (run_data->time_mode >= -1 && run_data->time_mode <= 2)
                         {
                             run_data->t_start.minute = 45;
-                            delay(50);
                             run_data->time_start = millis();
                         }
                     }
@@ -361,7 +363,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
     }
     // Serial.print(run_data->rgb_fast);
     display_tomato(run_data->t, run_data->time_mode);
-    delay(100);
 }
 
 static int tomato_exit_callback(void *param)

@@ -142,16 +142,23 @@ int WiFiClient::connect(const char *host, uint16_t port)
 
 int WiFiClient::connect(const char *host, uint16_t port, int timeout)
 {
+    Serial.printf("[WIFI_CLIENT] connect(%s:%d, timeout=%d) enter\n", host, port, timeout);
     ensureWSA();
     _close();
     _sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (_sock < 0) return 0;
+    if (_sock < 0) {
+        Serial.printf("[WIFI_CLIENT] socket() failed\n");
+        return 0;
+    }
 
     setSocketTimeout(_sock, timeout > 0 ? timeout : 1000);
 
+    Serial.printf("[WIFI_CLIENT] gethostbyname(%s) starting...\n", host);
     struct hostent *h = gethostbyname(host);
+    Serial.printf("[WIFI_CLIENT] gethostbyname(%s) done, h=%p\n", host, (void*)h);
     if (!h)
     {
+        Serial.printf("[WIFI_CLIENT] gethostbyname failed\n");
         _close();
         return 0;
     }
@@ -162,7 +169,10 @@ int WiFiClient::connect(const char *host, uint16_t port, int timeout)
     addr.sin_port = htons(port);
     memcpy(&addr.sin_addr, h->h_addr_list[0], h->h_length);
 
-    if (::connect(_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0)
+    Serial.printf("[WIFI_CLIENT] ::connect(%s:%d) starting...\n", host, port);
+    int conn_ret = ::connect(_sock, (struct sockaddr *)&addr, sizeof(addr));
+    Serial.printf("[WIFI_CLIENT] ::connect(%s:%d) done, ret=%d\n", host, port, conn_ret);
+    if (conn_ret != 0)
     {
         _close();
         return 0;
@@ -477,7 +487,19 @@ void HTTPClient::addHeader(const char *name, const char *value)
 
 int HTTPClient::GET()
 {
-    return _sendRequest("GET", nullptr);
+    fflush(stdout);
+    fprintf(stderr, "[HTTP_GET] ENTER\n");
+    fflush(stderr);
+    printf("[HTTP_GET] ENTER\n");
+    fflush(stdout);
+    Serial.printf("[HTTP_GET] ENTER\n");
+    Serial.flush();
+    int ret = _sendRequest("GET", nullptr);
+    fprintf(stderr, "[HTTP_GET] _sendRequest returned %d\n", ret);
+    fflush(stderr);
+    printf("[HTTP_GET] _sendRequest returned %d\n", ret);
+    fflush(stdout);
+    return ret;
 }
 
 int HTTPClient::POST(const char *body)

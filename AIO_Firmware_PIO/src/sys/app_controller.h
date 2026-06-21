@@ -54,11 +54,17 @@ public:
     int send_to(const char *from, const char *to,
                 APP_MESSAGE_TYPE type, void *message,
                 void *ext_info);
+
+    // 获取当前 APP 的期望循环间隔，0=默认阻塞
+    int get_loop_interval_ms(void);
     void deal_config(APP_MESSAGE_TYPE type,
                      const char *key, char *value);
     // 事件处理
     int req_event_deal(void);
     bool wifi_event(APP_MESSAGE_TYPE type); // wifi事件的处理
+    void set_event_deal_flag(void);         // 设置事件处理标志（由定时器回调调用）
+    void wifi_auto_close_check(void);       // WiFi自动关闭检查（由定时器回调调用）
+    void wifi_keep_alive(void);             // WiFi保活续期（由HTTP请求调用时调用）
     void read_config(SysUtilConfig *cfg);
     void write_config(SysUtilConfig *cfg);
     void read_config(SysMpuConfig *cfg);
@@ -84,9 +90,8 @@ private:
     std::list<EVENT_OBJ> eventList;   // 用来储存事件
     boolean m_wifi_status;            // 表示是wifi状态 true开启 false关闭
     unsigned long m_preWifiReqMillis; // 保存上一回请求的时间戳
-    int pre_app_index;     // 上一次运行的APP下标
-
-    TimerHandle_t xTimerEventDeal; // 事件处理定时器
+    int pre_app_index;                // 上一次运行的APP下标
+    boolean isRunEventDeal;           // 事件处理标志（由统一定时器回调设置）
 
 public:
     SysUtilConfig sys_cfg;

@@ -4,24 +4,14 @@
 #include "interface.h"
 #include "Arduino.h"
 
+extern TaskHandle_t g_app_main_task_handle;
+
 const char *app_event_type_info[] = {"APP_MESSAGE_WIFI_CONN", "APP_MESSAGE_WIFI_AP",
                                      "APP_MESSAGE_WIFI_ALIVE", "APP_MESSAGE_WIFI_DISCONN",
                                      "APP_MESSAGE_UPDATE_TIME", "APP_MESSAGE_MQTT_DATA",
                                      "APP_MESSAGE_GET_PARAM", "APP_MESSAGE_SET_PARAM",
                                      "APP_MESSAGE_READ_CFG", "APP_MESSAGE_WRITE_CFG",
                                      "APP_MESSAGE_NONE"};
-
-volatile static bool isRunEventDeal = false;
-
-// TickType_t mainFormRefreshLastTime;
-// const TickType_t xDelay500ms = pdMS_TO_TICKS(500);
-// mainFormRefreshLastTime = xTaskGetTickCount();
-// vTaskDelayUntil(&mainFormRefreshLastTime, xDelay500ms);
-
-void eventDealHandle(TimerHandle_t xTimer)
-{
-    isRunEventDeal = true;
-}
 
 AppController::AppController(const char *name)
 {
@@ -33,13 +23,7 @@ AppController::AppController(const char *name)
     // appList = new APP_OBJ[APP_MAX_NUM];
     m_wifi_status = false;
     m_preWifiReqMillis = GET_SYS_MILLIS();
-
-    // 定义一个事件处理定时器
-    xTimerEventDeal = xTimerCreate("Event Deal",
-                                   300 / portTICK_PERIOD_MS,
-                                   pdTRUE, (void *)0, eventDealHandle);
-    // 启动事件处理定时器
-    xTimerStart(xTimerEventDeal, 0);
+    isRunEventDeal = false;
 }
 
 void AppController::init(void)
@@ -151,12 +135,6 @@ int AppController::main_process(ImuAction *act_info)
         this->req_event_deal();
     }
 
-    // wifi自动关闭(在节能模式下)
-    if (0 == sys_cfg.power_mode && true == m_wifi_status && doDelayMillisTime(WIFI_LIFE_CYCLE, &m_preWifiReqMillis, false))
-    {
-        send_to(CTRL_NAME, CTRL_NAME, APP_MESSAGE_WIFI_DISCONN, 0, NULL);
-    }
-
     if (0 == app_exit_flag)
     {
         // 当前没有进入任何app
@@ -208,7 +186,7 @@ int AppController::main_process(ImuAction *act_info)
             vTaskDelay(200 / portTICK_PERIOD_MS);
         }
     }
-    else
+    if (1 == app_exit_flag)
     {
         app_control_display_scr(appList[cur_app_index]->app_image,
                                 appList[cur_app_index]->app_name,
@@ -218,6 +196,38 @@ int AppController::main_process(ImuAction *act_info)
     act_info->active = ACTIVE_TYPE::UNKNOWN;
     act_info->isValid = 0;
     return 0;
+}
+
+int AppController::get_loop_interval_ms(void)
+{
+    // 取值逻辑：
+    //   app_exit_flag == 0（桌面）→ 永久阻塞，等 IMU 动作唤醒
+    //   app_exit_flag == 1（APP内）:
+    //     fixed_fps_mode == true  → 自动计算剩余阻塞时间（目标间隔 - 已过时间）
+    //     loop_interval_ms = 0    → 永久阻塞（等 IMU 动作 / 网络响应 / WiFi 超时通知唤醒）
+    //     loop_interval_ms > 0    → 原值（如 300、20、30），主循环定时唤醒
+    if (app_exit_flag == 0) {
+        return -1;
+    }
+    if (cur_app_index < app_num && appList[cur_app_index]) {
+        APP_OBJ *app = appList[cur_app_index];
+
+        if (app->fixed_fps_mode && app->loop_interval_ms > 0) {
+            unsigned long now = GET_SYS_MILLIS();
+            long remaining = (long)app->last_frame_ms - (long)now;
+
+            if (remaining <= 0) {
+                app->last_frame_ms = now + app->loop_interval_ms;
+                return 0;
+            }
+
+            return (int)remaining;
+        }
+
+        int interval = app->loop_interval_ms;
+        return interval > 0 ? interval : -1;
+    }
+    return -1;
 }
 
 APP_OBJ *AppController::getAppByName(const char *name)
@@ -263,9 +273,9 @@ int AppController::send_to(const char *from, const char *to,
         // 发给控制器的消息(目前都是wifi事件)
         EVENT_OBJ new_event = {fromApp, type, message, 3, 0, 0};
         eventList.push_back(new_event);
-        Serial.print("[EVENT]\tAdd -> " + String(app_event_type_info[type]));
-        Serial.print(F("\tEventList Size: "));
-        Serial.println(eventList.size());
+        // Serial.print("[EVENT]\tAdd -> " + String(app_event_type_info[type]));
+        // Serial.print(F("\tEventList Size: "));
+        // Serial.println(eventList.size());
     }
     else
     {
@@ -296,11 +306,11 @@ int AppController::req_event_deal(void)
             ++event;
             continue;
         }
-        Serial.printf("[EVENT_DEAL] processing type=%d\n", (int)(*event).type);
-        Serial.flush();
+        // Serial.printf("[EVENT_DEAL] processing type=%d\n", (int)(*event).type);
+        // Serial.flush();
         bool ret = wifi_event((*event).type);
-        Serial.printf("[EVENT_DEAL] wifi_event ret=%d\n", (int)ret);
-        Serial.flush();
+        // Serial.printf("[EVENT_DEAL] wifi_event ret=%d\n", (int)ret);
+        // Serial.flush();
         if (false == ret)
         {
             // 本事件没处理完成
@@ -308,10 +318,10 @@ int AppController::req_event_deal(void)
             if ((*event).retryCount >= (*event).retryMaxNum)
             {
                 // 多次重试失败
-                Serial.print("[EVENT]\tDelete -> " + String(app_event_type_info[(*event).type]));
+                // Serial.print("[EVENT]\tDelete -> " + String(app_event_type_info[(*event).type]));
                 event = eventList.erase(event); // 删除该响应事件
-                Serial.print(F("\tEventList Size: "));
-                Serial.println(eventList.size());
+                // Serial.print(F("\tEventList Size: "));
+                // Serial.println(eventList.size());
             }
             else
             {
@@ -325,17 +335,17 @@ int AppController::req_event_deal(void)
         // 事件回调
         if (NULL != (*event).from && NULL != (*event).from->message_handle)
         {
-            Serial.printf("[EVENT_DEAL] calling message_handle(%s)...\n", (*event).from->app_name);
-            Serial.flush();
+            // Serial.printf("[EVENT_DEAL] calling message_handle(%s)...\n", (*event).from->app_name);
+            // Serial.flush();
             (*((*event).from->message_handle))(CTRL_NAME, (*event).from->app_name,
                                                (*event).type, (*event).info, NULL);
-            Serial.printf("[EVENT_DEAL] message_handle(%s) returned\n", (*event).from->app_name);
-            Serial.flush();
+            // Serial.printf("[EVENT_DEAL] message_handle(%s) returned\n", (*event).from->app_name);
+            // Serial.flush();
         }
-        Serial.print("[EVENT]\tDelete -> " + String(app_event_type_info[(*event).type]));
+        // Serial.print("[EVENT]\tDelete -> " + String(app_event_type_info[(*event).type]));
         event = eventList.erase(event); // 删除该响应完成的事件
-        Serial.print(F("\tEventList Size: "));
-        Serial.println(eventList.size());
+        // Serial.print(F("\tEventList Size: "));
+        // Serial.println(eventList.size());
     }
     return 0;
 }
@@ -462,4 +472,30 @@ void AppController::app_exit()
     }
     Serial.print(F("CpuFrequencyMhz: "));
     Serial.println(getCpuFrequencyMhz());
+}
+
+void AppController::set_event_deal_flag(void)
+{
+    isRunEventDeal = true;
+    if (!eventList.empty() && g_app_main_task_handle) {
+        xTaskNotifyGive(g_app_main_task_handle);
+    }
+}
+
+void AppController::wifi_auto_close_check(void)
+{
+    if (0 == sys_cfg.power_mode && true == m_wifi_status
+        && doDelayMillisTime(WIFI_LIFE_CYCLE, &m_preWifiReqMillis, false))
+    {
+        send_to(CTRL_NAME, CTRL_NAME, APP_MESSAGE_WIFI_DISCONN, 0, NULL);
+        if (g_app_main_task_handle)
+        {
+            xTaskNotifyGive(g_app_main_task_handle);
+        }
+    }
+}
+
+void AppController::wifi_keep_alive(void)
+{
+    m_preWifiReqMillis = GET_SYS_MILLIS();
 }

@@ -164,8 +164,10 @@ static int settings_init(AppController *sys)
     run_data = (SettingsAppRunData *)calloc(1, sizeof(SettingsAppRunData));
     run_data->recv_buf = (uint8_t *)malloc(RECV_BUF_LEN);
     run_data->recv_len = 0;
-    sys->send_to(SETTINGS_APP_NAME, CTRL_NAME,
-                 APP_MESSAGE_WIFI_CONN, NULL, NULL);
+    if (g_version_req == NULL && !g_version_displayed)
+    {
+        g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
+    }
     return 0;
 }
 
@@ -198,9 +200,10 @@ static void settings_process(AppController *sys,
 
     if (GO_FORWORD == act_info->active)
     {
-        sys->send_to(SETTINGS_APP_NAME, CTRL_NAME,
-                     APP_MESSAGE_WIFI_CONN, NULL, NULL);
-        delay(500);
+        if (g_version_req == NULL && !g_version_displayed)
+        {
+            g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
+        }
     }
 
     if (Serial.available())
@@ -216,11 +219,6 @@ static void settings_process(AppController *sys,
             Serial.write(run_data->recv_buf, len);
             analysis_uart_data(run_data->recv_len, run_data->recv_buf);
         }
-        delay(50);
-    }
-    else
-    {
-        delay(200);
     }
 
     // 发送请求，当请求完成后自动会调用 settings_event_notification 函数
@@ -258,7 +256,7 @@ static int settings_exit_callback(void *param)
 
     if (g_version_req)
     {
-        vPortFree(g_version_req);
+        g_version_req->orphaned = true;
         g_version_req = NULL;
     }
     g_version_displayed = false;
@@ -279,14 +277,6 @@ static void settings_message_handle(const char *from, const char *to,
     // 目前事件主要是wifi开关类事件（用于功耗控制）
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        if (g_version_req == NULL && !g_version_displayed)
-        {
-            g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
-        }
-    }
-    break;
     case APP_MESSAGE_WIFI_AP:
     {
         // todo

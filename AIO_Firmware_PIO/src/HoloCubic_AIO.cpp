@@ -25,9 +25,7 @@
 // 阶段2: 多任务重构
 #include <FreeRTOS.h>
 #include <task.h>
-#include <queue.h>
 #include "network_async.h"
-QueueHandle_t g_action_queue = NULL;
 
 bool isCheckAction = false;
 
@@ -48,13 +46,31 @@ void TaskLvglUpdate(void *parameter)
 }
 
 TimerHandle_t xTimerAction = NULL;
+TaskHandle_t g_app_main_task_handle = NULL;
 void actionCheckHandle(TimerHandle_t xTimer)
 {
-    // 阶段2: 投递动作检测请求到队列（替代布尔标志位）
-    if (g_action_queue) {
-        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-        int action_flag = 1;
-        xQueueSendFromISR(g_action_queue, &action_flag, &xHigherPriorityTaskWoken);
+    // IMU 动作检测
+    act_info = mpu.getAction();
+    
+    // 检查是否有新动作需要通知主循环（持锁读取，保证一致性）
+    bool has_action = false;
+    if (pdTRUE == xSemaphoreTake(g_action_mutex, portMAX_DELAY)) {
+        has_action = (act_info->active != UNKNOWN && act_info->isValid);
+        xSemaphoreGive(g_action_mutex);
+    }
+    
+    if (has_action && g_app_main_task_handle) {
+        xTaskNotifyGive(g_app_main_task_handle);
+    }
+
+    // 事件处理标志
+    if (app_controller) {
+        app_controller->set_event_deal_flag();
+    }
+
+    // WiFi 自动关闭检查（节能模式下超时则关闭 WiFi 并唤醒主循环）
+    if (app_controller) {
+        app_controller->wifi_auto_close_check();
     }
 }
 
@@ -68,11 +84,7 @@ void setup()
 {
     Serial.begin(115200);
 
-    // 阶段2: 创建动作队列（定时器 → AppCtrl 任务通信通道）
-    g_action_queue = xQueueCreate(10, sizeof(int));
-    if (!g_action_queue) {
-        Serial.println(F("[SETUP] FATAL: Failed to create action queue!"));
-    }
+    g_app_main_task_handle = xTaskGetCurrentTaskHandle();
 
     Serial.println(F("\nAIO (All in one) version " AIO_VERSION "\n"));
     Serial.flush();
@@ -258,7 +270,7 @@ void setup()
 
     // 先初始化一次动作数据 防空指针
     act_info = mpu.getAction();
-    // 定义一个mpu6050的动作检测定时器
+    // 定义一个统一定时器：IMU动作检测 + 事件处理标志 + WiFi自动关闭检查
     xTimerAction = xTimerCreate("Action Check",
                                 200 / portTICK_PERIOD_MS,
                                 pdTRUE, (void *)0, actionCheckHandle);
@@ -273,6 +285,19 @@ void loop()
     if (loop_count % 1000 == 0) {
         Serial.printf("[LOOP] frame=%lu\n", loop_count);
     }
+
+    // 根据当前 APP 的 loop_interval_ms 动态调整阻塞策略
+    // 取值由 get_loop_interval_ms() 转换：0 → -1(永久阻塞), >0 → 原值
+    // 阻塞等待 act_info 通知，超时后自动唤醒（兼容无动作时的后台刷新）
+    int interval = app_controller->get_loop_interval_ms();
+    if (interval < 0) {
+        Serial.printf("[LOOP] frame=%lu, interval=%d\n", loop_count, interval);
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    } else {
+        Serial.printf("[LOOP] frame=%lu, interval=%d\n", loop_count, interval);
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(interval));
+    }
+    Serial.printf("[LOOP] continue\n");
 
     // 阶段2: screen.routine() 已移除，LVGL 渲染由独立的 TaskLvgl 任务处理
 
@@ -290,13 +315,16 @@ void loop()
         }
     }
 #endif
-    // 阶段2: 从队列接收动作检测请求（替代布尔标志位轮询）
-    int action_flag;
-    if (g_action_queue && xQueueReceive(g_action_queue, &action_flag, 0) == pdTRUE)
-    {
-        act_info = mpu.getAction();
+    // 动作检测已移至 actionCheckHandle 定时器回调，主循环直接消费
+    // 持锁拷贝 + 立即清除原始数据，防止同一动作被重复处理
+    ImuAction action_copy;
+    if (pdTRUE == xSemaphoreTake(g_action_mutex, portMAX_DELAY)) {
+        action_copy = *act_info;
+        act_info->active = ACTIVE_TYPE::UNKNOWN;
+        act_info->isValid = 0;
+        xSemaphoreGive(g_action_mutex);
     }
-    app_controller->main_process(act_info); // 运行当前进程
+    app_controller->main_process(&action_copy); // 运行当前进程
     // Serial.println(ambLight.getLux() / 50.0);
     // rgb.setBrightness(ambLight.getLux() / 500.0);
 }

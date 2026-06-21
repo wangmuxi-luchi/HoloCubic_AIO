@@ -39,6 +39,8 @@ struct Game2048AppRunData
     int BornLocation = 0; // 记录新棋子的位置
     int *pBoard;
     int *moveRecord;
+    unsigned long anim_start_ms = 0; // 动画开始时间（用于防抖过滤）
+    bool pending_newborn = false;    // 是否有待显示的新棋子（动画完成后显示）
     BaseType_t xReturned_task_one = pdFALSE;
     TaskHandle_t xHandle_task_one = NULL;
     BaseType_t xReturned_task_two = pdFALSE;
@@ -90,21 +92,42 @@ static int game_2048_init(AppController *sys)
 static void game_2048_process(AppController *sys,
                               const ImuAction *act_info)
 {
+    static const unsigned long ANIM_DURATION = 700;
+
     if (RETURN == act_info->active)
     {
-        sys->app_exit(); // 退出APP
+        sys->app_exit();
         return;
     }
 
-    // 具体操作
+    if (run_data->pending_newborn)
+    {
+        if (doDelayMillisTime(ANIM_DURATION, &run_data->anim_start_ms, false))
+        {
+            AIO_LVGL_OPERATE_LOCK(showNewBorn(game.addRandom(), run_data->pBoard);)
+            run_data->pending_newborn = false;
+            run_data->anim_start_ms = 0;
+            APP_OBJ *app = sys->getAppByName(G2048_APP_NAME);
+            if (app) app->loop_interval_ms = 0;
+        }
+        return;
+    }
+
+    if (doDelayMillisTime(ANIM_DURATION, &run_data->anim_start_ms, false) == false)
+    {
+        return;
+    }
+
     if (TURN_RIGHT == act_info->active)
     {
         game.moveRight();
         if (game.comparePre() == 0)
         {
             AIO_LVGL_OPERATE_LOCK(showAnim(run_data->moveRecord, 4);)
-            delay(700);
-            AIO_LVGL_OPERATE_LOCK(showNewBorn(game.addRandom(), run_data->pBoard);)
+            run_data->pending_newborn = true;
+            run_data->anim_start_ms = GET_SYS_MILLIS();
+            APP_OBJ *app = sys->getAppByName(G2048_APP_NAME);
+            if (app) app->loop_interval_ms = ANIM_DURATION;
         }
     }
     else if (TURN_LEFT == act_info->active)
@@ -113,8 +136,10 @@ static void game_2048_process(AppController *sys,
         if (game.comparePre() == 0)
         {
             AIO_LVGL_OPERATE_LOCK(showAnim(run_data->moveRecord, 3);)
-            delay(700);
-            AIO_LVGL_OPERATE_LOCK(showNewBorn(game.addRandom(), run_data->pBoard);)
+            run_data->pending_newborn = true;
+            run_data->anim_start_ms = GET_SYS_MILLIS();
+            APP_OBJ *app = sys->getAppByName(G2048_APP_NAME);
+            if (app) app->loop_interval_ms = ANIM_DURATION;
         }
     }
     else if (UP == act_info->active)
@@ -123,8 +148,10 @@ static void game_2048_process(AppController *sys,
         if (game.comparePre() == 0)
         {
             AIO_LVGL_OPERATE_LOCK(showAnim(run_data->moveRecord, 1);)
-            delay(700);
-            AIO_LVGL_OPERATE_LOCK(showNewBorn(game.addRandom(), run_data->pBoard);)
+            run_data->pending_newborn = true;
+            run_data->anim_start_ms = GET_SYS_MILLIS();
+            APP_OBJ *app = sys->getAppByName(G2048_APP_NAME);
+            if (app) app->loop_interval_ms = ANIM_DURATION;
         }
     }
     else if (DOWN == act_info->active)
@@ -133,24 +160,21 @@ static void game_2048_process(AppController *sys,
         if (game.comparePre() == 0)
         {
             AIO_LVGL_OPERATE_LOCK(showAnim(run_data->moveRecord, 2);)
-            delay(700);
-            AIO_LVGL_OPERATE_LOCK(showNewBorn(game.addRandom(), run_data->pBoard);)
+            run_data->pending_newborn = true;
+            run_data->anim_start_ms = GET_SYS_MILLIS();
+            APP_OBJ *app = sys->getAppByName(G2048_APP_NAME);
+            if (app) app->loop_interval_ms = ANIM_DURATION;
         }
     }
 
     if (game.judge() == 1)
     {
-        //   rgb.setRGB(0, 255, 0);
         Serial.println("you win!");
     }
     else if (game.judge() == 2)
     {
-        //   rgb.setRGB(255, 0, 0);
         Serial.println("you lose!");
     }
-
-    // 程序需要时可以适当加延时
-    delay(300);
 }
 
 static void game_2048_background_task(AppController *sys,

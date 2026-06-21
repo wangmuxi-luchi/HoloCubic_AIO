@@ -1,6 +1,8 @@
 #include "Arduino.h"
 #include <chrono>
 #include <thread>
+#include <FreeRTOS.h>
+#include <task.h>
 
 static auto g_start_time = std::chrono::steady_clock::now();
 
@@ -20,10 +22,13 @@ unsigned long micros(void)
 
 void delay(unsigned long ms)
 {
-    auto start = std::chrono::steady_clock::now();
-    while (std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now() - start).count() < (long long)ms) {
-        std::this_thread::yield();
+    if (ms == 0)
+    {
+        taskYIELD();
+    }
+    else
+    {
+        vTaskDelay(pdMS_TO_TICKS(ms));
     }
 }
 

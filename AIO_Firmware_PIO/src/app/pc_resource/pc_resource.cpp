@@ -161,7 +161,6 @@ static void get_pc_resource_data(void)
                             run_data->host + "\r\n" + "User-Agent=ESP32\r\n" + "Connection: close\r\n\r\n");
 
     Serial.println("Get send");
-    delay(10);
 
     char endOfHeaders[] = "\n\n";
     bool ok = run_data->client->find(endOfHeaders);
@@ -202,6 +201,10 @@ static int pc_resource_init(AppController *sys)
     run_data->host = cfg_data.pc_ipaddr.c_str();
     run_data->client = new WiFiClient();
 
+    APP_OBJ *app = sys->getAppByName(PC_RESOURCE_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = cfg_data.sensorUpdataInterval;
+    }
     return 0;
 }
 
@@ -223,8 +226,6 @@ static void pc_resource_process(AppController *sys, const ImuAction *act_info)
         sys->send_to(PC_RESOURCE_APP_NAME, CTRL_NAME,
                      APP_MESSAGE_WIFI_CONN, (void *)UPDATE_RS_DATA, NULL);
     }
-
-    delay(30);
 }
 
 /**
