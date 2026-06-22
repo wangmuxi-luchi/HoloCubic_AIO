@@ -49,6 +49,13 @@ static int game_snake_init(AppController *sys)
         1,                            /*优先级*/
         &run_data->xHandle_task_run); /*任务句柄*/
 
+    APP_OBJ *app = sys->getAppByName(GAME_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = SNAKE_SPEED;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
+
     return 0;
 }
 
@@ -61,7 +68,7 @@ static void game_snake_process(AppController *sys, const ImuAction *act_info)
         return;
     }
 
-    // 操作触发
+    // 方向控制始终响应，不受帧率限制
     if (TURN_RIGHT == act_info->active)
     {
         update_driection(DIR_RIGHT);
@@ -79,13 +86,16 @@ static void game_snake_process(AppController *sys, const ImuAction *act_info)
         update_driection(DIR_DOWN);
     }
 
+    // 蛇移动：仅当足够时间流逝后才移动，防止按键唤醒导致额外移动
     if (run_data->gameStatus == 0 && run_data->xReturned_task_run == pdPASS)
     {
-        AIO_LVGL_OPERATE_LOCK(display_snake(run_data->gameStatus, LV_SCR_LOAD_ANIM_NONE););
+        static unsigned long last_move_ms = 0;
+        if (GET_SYS_MILLIS() - last_move_ms >= SNAKE_SPEED)
+        {
+            last_move_ms = GET_SYS_MILLIS();
+            AIO_LVGL_OPERATE_LOCK(display_snake(run_data->gameStatus, LV_SCR_LOAD_ANIM_NONE););
+        }
     }
-
-    // 速度控制
-    delay(SNAKE_SPEED);
 }
 
 static void game_snake_background_task(AppController *sys,

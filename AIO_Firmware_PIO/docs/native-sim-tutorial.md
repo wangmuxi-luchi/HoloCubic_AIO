@@ -224,13 +224,29 @@ set AUTO_TEST=WebServer && ./.pio/build/AIO_native_sim/program.exe
 
 ### 4.6 批量运行所有测试
 
+**Bash (Linux/macOS/Git Bash):**
 ```bash
-# 逐个运行（每次独立进程，避免状态污染）
-for test in "WebServer" "File Manager" "Picture" "2048" "Settings" "Idea"; do
+for test in "Picture" "2048" "Settings" "Idea" "WebServer" "File Manager" "LH&LXW"; do
     echo "=== Testing: $test ==="
     ./.pio/build/AIO_native_sim/program.exe --auto-test="$test"
     echo "Exit code: $?"
 done
+```
+
+**PowerShell (Windows) — 带超时保护：**
+```powershell
+$timeout = 90
+foreach ($test_name in @("Picture","2048","Settings","Idea","WebServer","File Manager")) {
+    Write-Host "=== Testing: $test_name ==="
+    $proc = Start-Process -FilePath ".\.pio\build\AIO_native_sim\program.exe" -ArgumentList "--auto-test=`"$test_name`"" -NoNewWindow -PassThru
+    $proc | Wait-Process -Timeout $timeout -ErrorAction SilentlyContinue
+    if ($proc.HasExited) { Write-Host "Exit code: $($proc.ExitCode)`n" } else { $proc.Kill(); Write-Host "TIMEOUT`n" }
+}
+# LH&LXW 单独处理（& 需反引号转义）
+Write-Host "=== Testing: LH&LXW ==="
+$proc = Start-Process -FilePath ".\.pio\build\AIO_native_sim\program.exe" -ArgumentList "--auto-test=`"LH&LXW`"" -NoNewWindow -PassThru
+$proc | Wait-Process -Timeout $timeout -ErrorAction SilentlyContinue
+if ($proc.HasExited) { Write-Host "Exit code: $($proc.ExitCode)`n" } else { $proc.Kill(); Write-Host "TIMEOUT`n" }
 ```
 
 ---

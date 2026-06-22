@@ -1,6 +1,8 @@
 #include "heartbeat_gui.h"
 
+#ifndef LV_LVGL_H_INCLUDE_SIMPLE
 #define LV_LVGL_H_INCLUDE_SIMPLE
+#endif
 
 #include "images/archerS_0000.h"
 #include "images/archerS_0001.h"

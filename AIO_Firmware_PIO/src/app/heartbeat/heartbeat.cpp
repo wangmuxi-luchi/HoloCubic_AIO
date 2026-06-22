@@ -231,6 +231,12 @@ static int heartbeat_init(AppController *sys)
 
     // 连接wifi，并开启mqtt客户端
     sys->send_to(HEARTBEAT_APP_NAME, CTRL_NAME, APP_MESSAGE_WIFI_CONN, NULL, NULL);
+    APP_OBJ *app = sys->getAppByName(HEARTBEAT_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 50;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
     return 0;
 }
 
@@ -307,7 +313,7 @@ static void heartbeat_process(AppController *sys,
     display_heartbeat("heartbeat", anim_type);
     heartbeat_set_send_recv_cnt_label(run_data->send_cnt, run_data->recv_cnt);
     display_heartbeat_img();
-    delay(30);
+    // delay(30);  // 由 loop_interval_ms 替代
 }
 
 static void heartbeat_background_task(AppController *sys,
@@ -477,4 +483,4 @@ static void heartbeat_message_handle(const char *from, const char *to,
 
 APP_OBJ heartbeat_app = {HEARTBEAT_APP_NAME, &app_heartbeat, "Author WoodwindHu\nVersion 2.0.0\n",
                          heartbeat_init, heartbeat_process, heartbeat_background_task,
-                         heartbeat_exit_callback, heartbeat_message_handle};
+                         heartbeat_exit_callback, heartbeat_message_handle, 30};

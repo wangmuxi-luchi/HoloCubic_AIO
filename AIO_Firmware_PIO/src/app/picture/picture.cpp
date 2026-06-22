@@ -126,6 +126,11 @@ static int picture_init(AppController *sys)
     TJpgDec.setJpgScale(1);
     // The decoder must be given the exact name of the rendering function above
     TJpgDec.setCallback(tft_output);
+
+    APP_OBJ *app = sys->getAppByName(PICTURE_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = cfg_data.switchInterval;
+    }
     return 0;
 }
 
@@ -207,7 +212,8 @@ static void picture_process(AppController *sys,
         }
         run_data->pic_perMillis = GET_SYS_MILLIS();
     }
-    delay(300);
+    // delay(300);  // 由 loop_interval_ms 替代
+
 }
 
 static void picture_background_task(AppController *sys,
@@ -280,4 +286,4 @@ static void picture_message_handle(const char *from, const char *to,
 
 APP_OBJ picture_app = {PICTURE_APP_NAME, &app_picture, "",
                        picture_init, picture_process, picture_background_task,
-                       picture_exit_callback, picture_message_handle};
+                       picture_exit_callback, picture_message_handle, 300};

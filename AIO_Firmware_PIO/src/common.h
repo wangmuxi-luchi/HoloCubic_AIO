@@ -48,8 +48,12 @@ boolean doDelayMillisTime(unsigned long interval,
 #define SCREEN_HOR_RES 240 // 水平
 #define SCREEN_VER_RES 240 // 竖直
 
+#ifndef SCREEN_HEIGHT
 #define SCREEN_HEIGHT SCREEN_VER_RES
+#endif
+#ifndef SCREEN_WIDTH
 #define SCREEN_WIDTH SCREEN_HOR_RES
+#endif
 
 // TFT屏幕接口
 // #define PEAK
@@ -74,6 +78,9 @@ boolean doDelayMillisTime(unsigned long interval,
 
 // lvgl 操作的锁
 extern SemaphoreHandle_t lvgl_mutex;
+
+// IMU 动作数据的锁（保护 mpu.action_info 在定时器回调和主循环之间的读写）
+extern SemaphoreHandle_t g_action_mutex;
 // LVGL操作的安全宏（避免脏数据）
 #define AIO_LVGL_OPERATE_LOCK(CODE)                          \
     if (pdTRUE == xSemaphoreTake(lvgl_mutex, portMAX_DELAY)) \

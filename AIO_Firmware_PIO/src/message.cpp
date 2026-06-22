@@ -108,7 +108,8 @@ uint32_t SettingsMsg::decode(const uint8_t *msg)
     break;
     case VALUE_TYPE_STRING:
     {
-        strncpy((char *)m_value, p_ch, 16);
+        strncpy((char *)m_value, p_ch, sizeof(m_value));
+        m_value[sizeof(m_value) - 1] = '\0';
         for (; (*p_ch != ' ') && (*p_ch != '\r'); ++p_ch)
             ;
         p_ch++;
@@ -157,7 +158,7 @@ uint32_t SettingsMsg::encode(uint8_t *msg)
     break;
     case VALUE_TYPE_STRING:
     {
-        strncpy((char *)&msg[index], (char *)m_value, 16);
+        strncpy((char *)&msg[index], (char *)m_value, sizeof(m_value));
         index = index + strlen((char *)m_value) + 1;
     }
     break;

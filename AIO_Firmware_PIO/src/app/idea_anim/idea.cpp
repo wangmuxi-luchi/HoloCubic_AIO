@@ -89,19 +89,19 @@ static void idea_process(AppController *sys,
     {
         choose = (choose + 1) % 4;
         screen_clear(0x0000);
-        delay(500);
+        // delay(500);  // 由 loop_interval_ms 替代
     }
     else if (TURN_LEFT == action->active)
     {
         choose = (choose + 4 - 1) % 4;
         screen_clear(0x0000);
-        delay(500);
+        // delay(500);  // 由 loop_interval_ms 替代
     }
 
     screen_clear(0x0000);
     ui_update(choose);
     tft->pushImage(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, screen_buf);
-    delay(20);
+    // delay(20);  // 由 loop_interval_ms 替代
 }
 
 static void idea_background_task(AppController *sys,
@@ -129,4 +129,4 @@ static void idea_message_handle(const char *from, const char *to,
 
 APP_OBJ idea_app = {IDEA_APP_NAME, &app_idea, "", idea_init,
                     idea_process, idea_background_task, idea_exit_callback,
-                    idea_message_handle};
+                    idea_message_handle, 20};

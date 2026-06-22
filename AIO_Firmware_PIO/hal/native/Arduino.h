@@ -13,6 +13,7 @@
 #include <timers.h>
 #include <semphr.h>
 #include "esp32-hal.h"
+#include "log_buffer.h"
 #include <ctype.h>
 
 typedef bool boolean;
@@ -225,14 +226,8 @@ public:
     size_t println(float n, int digits = 2) { size_t s = print(n, digits); return s + println(); }
     size_t println(double n, int digits = 2) { size_t s = print(n, digits); return s + println(); }
 
-    size_t printf(const char *fmt, ...) {
-        va_list args;
-        va_start(args, fmt);
-        char buf[512];
-        vsnprintf(buf, sizeof(buf), fmt, args);
-        va_end(args);
-        return print(buf);
-    }
+    size_t printf(const char *fmt, ...);
+    size_t printf_loc(const char *file, int line, const char *fmt, ...);
 };
 
 inline size_t String::printTo(Print& p) const { return p.write((const uint8_t*)_str.c_str(), _str.length()); }
@@ -241,11 +236,14 @@ class HardwareSerial : public Print
 {
 public:
     void begin(unsigned long baud) { (void)baud; }
-    void flush() { fflush(stdout); }
-    size_t write(uint8_t c) override { fputc(c, stdout); return 1; }
+    void flush() { log_buffer_flush(); }
+    size_t write(uint8_t c) override {
+        log_buffer_write((const char *)&c, 1);
+        return 1;
+    }
     size_t write(const uint8_t *buffer, size_t size) override {
         if (buffer && size > 0) {
-            fwrite(buffer, 1, size, stdout);
+            log_buffer_write((const char *)buffer, (uint32_t)size);
         }
         return size;
     }
@@ -288,6 +286,35 @@ void setCpuFrequencyMhz(unsigned long freq);
 
 #ifdef __cplusplus
 }
+
+// Print::printf / printf_loc 实现（依赖 millis()，必须在 millis() 声明之后）
+inline size_t Print::printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char buf[512];
+    int prefix_len = snprintf(buf, sizeof(buf), "[%lu] ", (unsigned long)millis());
+    vsnprintf(buf + prefix_len, sizeof(buf) - prefix_len, fmt, args);
+    va_end(args);
+    return print(buf);
+}
+
+inline size_t Print::printf_loc(const char *file, int line, const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char buf[512];
+    const char *basename = file;
+    for (const char *p = file; *p; p++) {
+        if (*p == '/' || *p == '\\') basename = p + 1;
+    }
+    int prefix_len = snprintf(buf, sizeof(buf), "[%lu][%s:%d] ", (unsigned long)millis(), basename, line);
+    vsnprintf(buf + prefix_len, sizeof(buf) - prefix_len, fmt, args);
+    va_end(args);
+    return print(buf);
+}
+
+#define SERIAL_LOGF(fmt, ...) Serial.printf_loc(__FILE__, __LINE__, fmt, ##__VA_ARGS__)
 
 inline long random(long max) { return rand() % max; }
 inline long random(long min, long max) { return min + rand() % (max - min); }

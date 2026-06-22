@@ -142,16 +142,23 @@ int WiFiClient::connect(const char *host, uint16_t port)
 
 int WiFiClient::connect(const char *host, uint16_t port, int timeout)
 {
+    Serial.printf("[WIFI_CLIENT] connect(%s:%d, timeout=%d) enter\n", host, port, timeout);
     ensureWSA();
     _close();
     _sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (_sock < 0) return 0;
+    if (_sock < 0) {
+        Serial.printf("[WIFI_CLIENT] socket() failed\n");
+        return 0;
+    }
 
     setSocketTimeout(_sock, timeout > 0 ? timeout : 1000);
 
+    Serial.printf("[WIFI_CLIENT] gethostbyname(%s) starting...\n", host);
     struct hostent *h = gethostbyname(host);
+    Serial.printf("[WIFI_CLIENT] gethostbyname(%s) done, h=%p\n", host, (void*)h);
     if (!h)
     {
+        Serial.printf("[WIFI_CLIENT] gethostbyname failed\n");
         _close();
         return 0;
     }
@@ -162,7 +169,10 @@ int WiFiClient::connect(const char *host, uint16_t port, int timeout)
     addr.sin_port = htons(port);
     memcpy(&addr.sin_addr, h->h_addr_list[0], h->h_length);
 
-    if (::connect(_sock, (struct sockaddr *)&addr, sizeof(addr)) != 0)
+    Serial.printf("[WIFI_CLIENT] ::connect(%s:%d) starting...\n", host, port);
+    int conn_ret = ::connect(_sock, (struct sockaddr *)&addr, sizeof(addr));
+    Serial.printf("[WIFI_CLIENT] ::connect(%s:%d) done, ret=%d\n", host, port, conn_ret);
+    if (conn_ret != 0)
     {
         _close();
         return 0;
@@ -477,7 +487,19 @@ void HTTPClient::addHeader(const char *name, const char *value)
 
 int HTTPClient::GET()
 {
-    return _sendRequest("GET", nullptr);
+    fflush(stdout);
+    fprintf(stderr, "[HTTP_GET] ENTER\n");
+    fflush(stderr);
+    printf("[HTTP_GET] ENTER\n");
+    fflush(stdout);
+    Serial.printf("[HTTP_GET] ENTER\n");
+    Serial.flush();
+    int ret = _sendRequest("GET", nullptr);
+    fprintf(stderr, "[HTTP_GET] _sendRequest returned %d\n", ret);
+    fflush(stderr);
+    printf("[HTTP_GET] _sendRequest returned %d\n", ret);
+    fflush(stdout);
+    return ret;
 }
 
 int HTTPClient::POST(const char *body)
@@ -759,22 +781,48 @@ int HTTPClient::_sendRequest(const char *method, const char *body)
     printf("[HTTP] Content-Length=%d, reading body...\n", _contentLength);
 
     // Read body
-    while (true)
+    if (_contentLength > 0)
     {
-        unsigned long waitStart = millis();
-        while (client.available() == 0)
+        // Content-Length 已知：精确读取，读完即止
+        while ((int)_responseBody.length() < _contentLength)
         {
-            if (millis() - waitStart > _timeout || !client.connected())
+            unsigned long waitStart = millis();
+            while (client.available() == 0)
+            {
+                if (millis() - waitStart > _timeout || !client.connected())
+                    break;
+                delay(10);
+            }
+            if (client.available() == 0 && !client.connected())
                 break;
-            delay(10);
-        }
-        if (client.available() == 0 && !client.connected())
-            break;
 
-        while (client.available())
+            while (client.available() && (int)_responseBody.length() < _contentLength)
+            {
+                char c = (char)client.read();
+                _responseBody += c;
+            }
+        }
+    }
+    else
+    {
+        // Content-Length 未知：读到 server 关闭连接
+        while (true)
         {
-            char c = (char)client.read();
-            _responseBody += c;
+            unsigned long waitStart = millis();
+            while (client.available() == 0)
+            {
+                if (millis() - waitStart > _timeout || !client.connected())
+                    break;
+                delay(10);
+            }
+            if (client.available() == 0 && !client.connected())
+                break;
+
+            while (client.available())
+            {
+                char c = (char)client.read();
+                _responseBody += c;
+            }
         }
     }
 

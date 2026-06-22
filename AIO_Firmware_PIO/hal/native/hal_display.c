@@ -5,7 +5,9 @@
 #include <windows.h>
 #include <stdbool.h>
 
+#ifndef SDL_MAIN_HANDLED
 #define SDL_MAIN_HANDLED
+#endif
 #include <SDL2/SDL.h>
 
 // LVGL 头文件 - 在编译时由 PlatformIO 的 lib 路径提供

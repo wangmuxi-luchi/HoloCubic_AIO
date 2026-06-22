@@ -100,7 +100,6 @@ struct TestStep {
     int frame_delay;   // 最大等待帧数 / 超时帧数（约 1ms/帧）
     int action;        // 注入的动作
     int hook_type;     // 等待的完成信号类型（HookType 枚举）
-    bool direct_only;  // true: 只设置 act_info->active，不注入 g_last_action（用于子应用退出）
 };
 
 struct TestCase {
@@ -128,6 +127,7 @@ static struct {
     int target_app_index;           // 目标 APP 在 appList 中的索引
     const TestCase *current_case;
     bool case_result;
+    bool test_failed;               // 钩子超时标志：true 表示有步骤因超时失败
     int total_tests;
     int passed_tests;
 
@@ -210,36 +210,44 @@ static const TestStep file_manager_steps[] = {
 // 不再依赖帧计数盲目等待，而是通过钩子信号动态检查通过条件
 static const TestStep LHLXW_steps[] = {
     // Step 0: 等待 app_init + startLog 动画完成
-    {600,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {600,  AUTO_ACTION_NONE,       HOOK_NONE},
     // Step 1-3: 切换到 cyber(option 1) 并进入（TURN_RIGHT后等30帧让LHLXW消费动作）
-    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
-    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING},
     // Step 4-5: 运行 cyber 后退出，钩子验证退出
-    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE},
+    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED},
     // Step 6: 等待退出完成
-    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE},
     // Step 7-9: 切换到 heartbeat(option 2) 并进入
-    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
-    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING},
     // Step 10-11: 运行 heartbeat 后退出
-    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE},
+    {300,  AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED},
     // Step 12: 等待退出完成
-    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE},
     // Step 13-15: 切换到 codeRain(option 3) 并进入
-    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE,  false},
-    {30,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING,  false},
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE},
+    {300,  AUTO_ACTION_UP,         HOOK_LHLXW_SUBAPP_RUNNING},
     // Step 16-17: 运行 codeRain 后退出
-    {150,  AUTO_ACTION_NONE,       HOOK_NONE,  false},
-    {2000, AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED,  false},
+    {150,  AUTO_ACTION_NONE,       HOOK_NONE},
+    {2000, AUTO_ACTION_RETURN,     HOOK_LHLXW_SUBAPP_EXITED},
     // Step 18: 等待退出完成
-    {10,   AUTO_ACTION_NONE,       HOOK_NONE,  false},
+    {10,   AUTO_ACTION_NONE,       HOOK_NONE},
     // Step 19: 退出 LHLXW（emoji option 4 跳过，直接从 codeRain 退出）
-    {500,  AUTO_ACTION_RETURN,     HOOK_EXIT,  false},
+    {500,  AUTO_ACTION_RETURN,     HOOK_EXIT},
+};
+
+// StockMarket APP 测试（验证异步 HTTP 不阻塞退出）
+static const TestStep stockmarket_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},     // 等待进入（含 HTTP 异步请求发起）
+    {100,  AUTO_ACTION_NONE,       HOOK_NONE},      // 等待 HTTP 请求进行中
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},      // 退出（验证异步 HTTP 不阻塞）
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出完成
 };
 
 // ========================
@@ -254,6 +262,7 @@ static const TestCase test_cases[] = {
     {"WebServer",     0,  server_steps,       5, 20},
     {"File Manager",  0,  file_manager_steps, 4, 20},
     {"LH&LXW",        0,  LHLXW_steps,       20, 20},
+    {"Stock",         0,  stockmarket_steps,  4, 20},
 };
 
 static const int test_case_count = sizeof(test_cases) / sizeof(test_cases[0]);
@@ -453,6 +462,7 @@ static void start_test_case(const TestCase *tc)
     test_state.frame_counter = 0;
     test_state.nav_counter = 0;
     test_state.case_result = true;
+    test_state.test_failed = false;
     test_state.nav_first_action_sent = false;
     test_state.enter_go_sent = false;
 
@@ -719,10 +729,12 @@ void auto_test_tick(void)
                               test_state.current_step + 1, tc->step_count,
                               test_state.frame_counter);
                 } else if (timeout) {
-                    step_complete = true;
-                    LOG_WARN(AUTO_TEST_TAG, "Step %d/%d: hook timeout (%d frames), forcing advance",
-                             test_state.current_step + 1, tc->step_count,
-                             test_state.frame_counter);
+                    test_state.test_failed = true;
+                    test_state.phase = 3;
+                    LOG_ERROR(AUTO_TEST_TAG, "Step %d/%d: hook timeout (%d frames), TEST FAILED",
+                              test_state.current_step + 1, tc->step_count,
+                              test_state.frame_counter);
+                    break;
                 }
             }
 
@@ -731,39 +743,20 @@ void auto_test_tick(void)
                 // HOOK_NONE 步骤在完成时注入动作（延迟注入模式）
                 // 钩子类步骤已在首帧注入，这里只处理 HOOK_NONE
                 if (step->hook_type == HOOK_NONE && step->action != AUTO_ACTION_NONE) {
-                    if (step->direct_only) {
-                        // direct_only: 只设置 act_info->active，不注入 g_last_action
-                        // 用于子应用退出：子应用的 while(1) 循环直接读 act_info->active
-                        // 避免 g_last_action 残留导致外层 process 误读
-                        if (act_info) {
-                            switch (step->action) {
-                                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
-                                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
-                                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
-                                case AUTO_ACTION_UP:         act_info->active = UP;         break;
-                                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
-                                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
-                                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
-                            }
+                    hal_native_inject_action(step->action);
+                    if (act_info) {
+                        switch (step->action) {
+                            case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
+                            case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
+                            case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
+                            case AUTO_ACTION_UP:         act_info->active = UP;         break;
+                            case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
+                            case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
+                            case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
                         }
-                        LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d (direct_only, act_info only)",
-                                  test_state.current_step + 1, tc->step_count, step->action);
-                    } else {
-                        hal_native_inject_action(step->action);
-                        if (act_info) {
-                            switch (step->action) {
-                                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
-                                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
-                                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
-                                case AUTO_ACTION_UP:         act_info->active = UP;         break;
-                                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
-                                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
-                                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
-                            }
-                        }
-                        LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d",
-                                  test_state.current_step + 1, tc->step_count, step->action);
                     }
+                    LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d",
+                              test_state.current_step + 1, tc->step_count, step->action);
                 }
                 test_state.current_step++;
             }
@@ -779,7 +772,11 @@ void auto_test_tick(void)
     // Phase 3: 完成阶段
     // ============================================================
     case 3:
-        LOG_INFO(AUTO_TEST_TAG, "===== Test '%s' PASSED =====", tc->app_name);
+        if (test_state.test_failed) {
+            LOG_ERROR(AUTO_TEST_TAG, "===== Test '%s' FAILED (hook timeout) =====", tc->app_name);
+        } else {
+            LOG_INFO(AUTO_TEST_TAG, "===== Test '%s' PASSED =====", tc->app_name);
+        }
         LOG_INFO(AUTO_TEST_TAG, "Results: %d/%d passed", test_state.passed_tests, test_state.total_tests);
         test_state.running = false;
         test_state.completed = true;
@@ -849,7 +846,15 @@ bool auto_test_app_heartbeat(void)   { LOG_WARN(AUTO_TEST_TAG, "Heartbeat test n
 bool auto_test_app_idea_anim(void)   { LOG_WARN(AUTO_TEST_TAG, "IdeaAnim test not implemented"); return false; }
 bool auto_test_app_media_player(void){ LOG_WARN(AUTO_TEST_TAG, "MediaPlayer test not implemented"); return false; }
 bool auto_test_app_screen_share(void){ LOG_WARN(AUTO_TEST_TAG, "ScreenShare test not implemented"); return false; }
-bool auto_test_app_stockmarket(void) { LOG_WARN(AUTO_TEST_TAG, "StockMarket test not implemented"); return false; }
+bool auto_test_app_stockmarket(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running StockMarket app test...");
+    const TestCase *tc = find_test_case("Stock");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_weather(void)     { LOG_WARN(AUTO_TEST_TAG, "Weather test not implemented"); return false; }
 bool auto_test_app_tomato(void)      { LOG_WARN(AUTO_TEST_TAG, "Tomato test not implemented"); return false; }
 bool auto_test_app_anniversary(void) { LOG_WARN(AUTO_TEST_TAG, "Anniversary test not implemented"); return false; }
