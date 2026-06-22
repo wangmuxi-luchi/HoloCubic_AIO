@@ -30,7 +30,7 @@ public:
     tm getTimeStruct()
     {
         time_t now = time(NULL) + _offset;
-        struct tm* t = localtime(&now);
+        struct tm* t = gmtime(&now);
         return *t;
     }
 
@@ -119,13 +119,13 @@ public:
     int getHour(bool mode = false)
     {
         int h = getTimeStruct().tm_hour;
-        if (mode) return (h % 12 == 0) ? 12 : h % 12;
-        return h;
+        if (mode) return h;
+        return (h % 12 == 0) ? 12 : h % 12;
     }
     int getDay()          { return getTimeStruct().tm_mday; }
     int getDayofWeek()    { return getTimeStruct().tm_wday; }
     int getDayofYear()    { return getTimeStruct().tm_yday; }
-    int getMonth()        { return getTimeStruct().tm_mon + 1; }
+    int getMonth()        { return getTimeStruct().tm_mon; }
     int getYear()         { return getTimeStruct().tm_year + 1900; }
 
 private:

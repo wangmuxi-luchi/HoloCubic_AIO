@@ -116,20 +116,24 @@ HttpRequest *http_get_async(const char *url, TaskHandle_t notify_task, const cha
     Serial.printf("[HTTP_ASYNC] http_get_async memset done\n");
     Serial.flush();
 
+    char task_name[16];
+    snprintf(task_name, sizeof(task_name), "http_%04X", (uint16_t)(uintptr_t)req);
     BaseType_t ret = xTaskCreate(
         http_request_task,
-        "http_async",
-        8 * 1024,
+        task_name,
+        3 * 1024,
         req,
         1,
         NULL);
 
     if (ret != pdPASS)
     {
+        Serial.printf("[HTTP_ASYNC] %s xTaskCreate FAILED, ret=%d, heap=%u\n", task_name, (int)ret, xPortGetFreeHeapSize());
+        Serial.flush();
         vPortFree(req);
         return NULL;
     }
-    Serial.printf("[HTTP_ASYNC] http_get_async task created, ret=%d\n", (int)ret);
+    Serial.printf("[HTTP_ASYNC] %s task created, ret=%d\n", task_name, (int)ret);
     Serial.flush();
 
     return req;

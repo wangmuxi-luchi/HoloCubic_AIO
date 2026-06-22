@@ -781,22 +781,48 @@ int HTTPClient::_sendRequest(const char *method, const char *body)
     printf("[HTTP] Content-Length=%d, reading body...\n", _contentLength);
 
     // Read body
-    while (true)
+    if (_contentLength > 0)
     {
-        unsigned long waitStart = millis();
-        while (client.available() == 0)
+        // Content-Length 已知：精确读取，读完即止
+        while ((int)_responseBody.length() < _contentLength)
         {
-            if (millis() - waitStart > _timeout || !client.connected())
+            unsigned long waitStart = millis();
+            while (client.available() == 0)
+            {
+                if (millis() - waitStart > _timeout || !client.connected())
+                    break;
+                delay(10);
+            }
+            if (client.available() == 0 && !client.connected())
                 break;
-            delay(10);
-        }
-        if (client.available() == 0 && !client.connected())
-            break;
 
-        while (client.available())
+            while (client.available() && (int)_responseBody.length() < _contentLength)
+            {
+                char c = (char)client.read();
+                _responseBody += c;
+            }
+        }
+    }
+    else
+    {
+        // Content-Length 未知：读到 server 关闭连接
+        while (true)
         {
-            char c = (char)client.read();
-            _responseBody += c;
+            unsigned long waitStart = millis();
+            while (client.available() == 0)
+            {
+                if (millis() - waitStart > _timeout || !client.connected())
+                    break;
+                delay(10);
+            }
+            if (client.available() == 0 && !client.connected())
+                break;
+
+            while (client.available())
+            {
+                char c = (char)client.read();
+                _responseBody += c;
+            }
         }
     }
 
