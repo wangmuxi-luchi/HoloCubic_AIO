@@ -33,18 +33,6 @@ bool isCheckAction = false;
 ImuAction *act_info;           // 存放mpu6050返回的数据
 AppController *app_controller; // APP控制器
 
-TaskHandle_t handleTaskLvgl;
-
-void TaskLvglUpdate(void *parameter)
-{
-    // ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    for (;;)
-    {
-        AIO_LVGL_OPERATE_LOCK(lv_timer_handler();)
-        vTaskDelay(5);
-    }
-}
-
 TimerHandle_t xTimerAction = NULL;
 TaskHandle_t g_app_main_task_handle = NULL;
 void actionCheckHandle(TimerHandle_t xTimer)
@@ -153,24 +141,6 @@ void setup()
     lv_fs_fatfs_init();
     Serial.printf("[SETUP] Step 5: app_controller->init()...\n");
     Serial.flush();
-
-    // 阶段2: 启用 LVGL 独立渲染任务（高优先级，5ms 周期）
-    // 与 TaskAppCtrl 并行运行，避免 APP 阻塞导致 UI 冻结
-    BaseType_t taskLvglReturned = xTaskCreate(
-        TaskLvglUpdate,
-        "LvglThread",
-        4 * 1024,
-        nullptr,
-        TASK_LVGL_PRIORITY,
-        &handleTaskLvgl);
-    if (taskLvglReturned != pdPASS)
-    {
-        Serial.println("taskLvglReturned != pdPASS");
-    }
-    else
-    {
-        Serial.println("taskLvglReturned == pdPASS");
-    }
 
 #if LV_USE_LOG
     lv_log_register_print_cb(my_print);
@@ -286,21 +256,6 @@ void loop()
         Serial.printf("[LOOP] frame=%lu\n", loop_count);
     }
 
-    // 根据当前 APP 的 loop_interval_ms 动态调整阻塞策略
-    // 取值由 get_loop_interval_ms() 转换：0 → -1(永久阻塞), >0 → 原值
-    // 阻塞等待 act_info 通知，超时后自动唤醒（兼容无动作时的后台刷新）
-    int interval = app_controller->get_loop_interval_ms();
-    if (interval < 0) {
-        Serial.printf("[LOOP] frame=%lu, interval=%d\n", loop_count, interval);
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-    } else {
-        Serial.printf("[LOOP] frame=%lu, interval=%d\n", loop_count, interval);
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(interval));
-    }
-    Serial.printf("[LOOP] continue\n");
-
-    // 阶段2: screen.routine() 已移除，LVGL 渲染由独立的 TaskLvgl 任务处理
-
 #ifdef PEAK
     // 适配稚晖君的PEAK
     if (!mpu.Encoder_GetIsPush())
@@ -315,6 +270,13 @@ void loop()
         }
     }
 #endif
+    // LVGL 渲染：排空队列，同时获取下次定时器到期时间
+    uint32_t time_until_next;
+    do {
+        Serial.printf("[LOOP] lv_timer_handler()\n");
+        time_until_next = lv_timer_handler();
+    } while (time_until_next == 0);
+    
     // 动作检测已移至 actionCheckHandle 定时器回调，主循环直接消费
     // 持锁拷贝 + 立即清除原始数据，防止同一动作被重复处理
     ImuAction action_copy;
@@ -325,6 +287,39 @@ void loop()
         xSemaphoreGive(g_action_mutex);
     }
     app_controller->main_process(&action_copy); // 运行当前进程
-    // Serial.println(ambLight.getLux() / 50.0);
-    // rgb.setBrightness(ambLight.getLux() / 500.0);
+
+    // LVGL 渲染：排空队列，同时获取下次定时器到期时间
+    // uint32_t time_until_next;
+    do {
+        Serial.printf("[LOOP] lv_timer_handler()\n");
+        time_until_next = lv_timer_handler();
+    } while (time_until_next == 0);
+
+    // 根据 LVGL 定时器状态 + APP 需求，智能决定阻塞时长
+    // lv_timer_handler() 返回值：
+    //   UINT32_MAX → 无活跃定时器，可以放心阻塞
+    //   其他值     → 距离下次定时器到期的毫秒数
+    int interval = app_controller->get_loop_interval_ms();
+    TickType_t timeout;
+
+    if (interval < 0) {
+        // 无 APP 运行：仅当 LVGL 有定时器时短暂唤醒
+        if (time_until_next == UINT32_MAX) {
+            timeout = portMAX_DELAY;
+        } else {
+            timeout = pdMS_TO_TICKS(time_until_next);
+        }
+    } else {
+        // APP 运行中：取 APP 间隔和 LVGL 间隔的较小值
+        uint32_t app_ms = (uint32_t)interval;
+        if (time_until_next != UINT32_MAX && time_until_next < app_ms) {
+            timeout = pdMS_TO_TICKS(time_until_next);
+        } else {
+            timeout = pdMS_TO_TICKS(app_ms);
+        }
+    }
+    Serial.printf("[LOOP] timeout=%d\n", timeout);
+
+    ulTaskNotifyTake(pdTRUE, timeout);
+    Serial.printf("[LOOP] ulTaskNotifyTake()\n");
 }

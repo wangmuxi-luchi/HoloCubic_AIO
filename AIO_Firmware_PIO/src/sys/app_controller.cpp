@@ -183,7 +183,8 @@ int AppController::main_process(ImuAction *act_info)
             app_control_display_scr(appList[cur_app_index]->app_image,
                                     appList[cur_app_index]->app_name,
                                     anim_type, false);
-            vTaskDelay(200 / portTICK_PERIOD_MS);
+            // Serial.printf("[APPCTRL] before vTaskDelay\n");
+            // vTaskDelay(200 / portTICK_PERIOD_MS);
         }
     }
     if (1 == app_exit_flag)
@@ -427,6 +428,8 @@ bool AppController::wifi_event(APP_MESSAGE_TYPE type)
 
 void AppController::app_exit()
 {
+    Serial.printf("[APP_EXIT] app_exit() called, cur_app_index=%d\n", cur_app_index);
+
     app_exit_flag = 0; // 退出APP
 
     // 清空该对象的所有请求

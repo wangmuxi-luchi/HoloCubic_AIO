@@ -118,6 +118,11 @@ static HttpRequest *g_weather_now_req = NULL;
 static HttpRequest *g_weather_ntp_req = NULL;
 static HttpRequest *g_weather_daily_req = NULL;
 
+static bool weather_ui_initialized = false;
+static int last_clock_page = -1;
+static bool weather_data_changed = false;
+static unsigned long last_space_anim_ms = 0;
+
 enum WEA_EVENT_ID
 {
     UPDATE_NOW,
@@ -462,9 +467,11 @@ static int weather_init(AppController *sys)
     APP_OBJ *app = sys->getAppByName(WEATHER_APP_NAME);
     if (app) {
         app->loop_interval_ms = 100;
-        app->fixed_fps_mode = true;
-        app->last_frame_ms = GET_SYS_MILLIS();
     }
+    weather_ui_initialized = false;
+    last_clock_page = -1;
+    weather_data_changed = false;
+    last_space_anim_ms = 0;
     return 0;
 }
 
@@ -500,6 +507,7 @@ static void weather_process(AppController *sys,
                 strcpy(run_data->wea.windpower, weather_live["windpower"].as<String>().c_str());
                 run_data->wea.airQulity = airQulityLevel(run_data->wea.windpower);
                 Serial.println(" Get weather info OK\n");
+                weather_data_changed = true;
             }
         }
         else
@@ -525,6 +533,7 @@ static void weather_process(AppController *sys,
             run_data->preLocalTimestamp = GET_SYS_MILLIS();
             Serial.printf("[WEATHER] NTP response: raw=%s, preNetTimestamp=%lld, preLocalTimestamp=%lu\r\n",
                           time.c_str(), run_data->preNetTimestamp, run_data->preLocalTimestamp);
+            weather_data_changed = true;
         }
         else
         {
@@ -573,19 +582,35 @@ static void weather_process(AppController *sys,
     {
         anim_type = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
         run_data->clock_page = (run_data->clock_page + 1) % WEATHER_PAGE_SIZE;
+        Serial.printf("[WEA-DBG] TURN_RIGHT: clock_page %d -> %d, last_clock_page=%d\n", 
+                      (run_data->clock_page + WEATHER_PAGE_SIZE - 1) % WEATHER_PAGE_SIZE, 
+                      run_data->clock_page, last_clock_page);
     }
     else if (TURN_LEFT == act_info->active)
     {
         anim_type = LV_SCR_LOAD_ANIM_MOVE_LEFT;
-        // 以下等效与 clock_page = (clock_page + WEATHER_PAGE_SIZE - 1) % WEATHER_PAGE_SIZE;
-        // +3为了不让数据溢出成负数，而导致取模逻辑错误
+        int prev_page = run_data->clock_page;
         run_data->clock_page = (run_data->clock_page + WEATHER_PAGE_SIZE - 1) % WEATHER_PAGE_SIZE;
+        Serial.printf("[WEA-DBG] TURN_LEFT: clock_page %d -> %d, last_clock_page=%d\n", 
+                      prev_page, run_data->clock_page, last_clock_page);
     }
 
     // 界面刷新
     if (run_data->clock_page == 0)
     {
-        display_weather(run_data->wea, anim_type);
+        // 天气页有动画和定时刷新，恢复 100ms 循环间隔
+        APP_OBJ *app = sys->getAppByName(WEATHER_APP_NAME);
+        if (app) {
+            app->loop_interval_ms = 100;
+        }
+        // 数据变更守护：仅在首次渲染、页面切换、强制更新或天气数据更新时刷新UI
+        if (!weather_ui_initialized || weather_data_changed || last_clock_page != 0 || run_data->coactusUpdateFlag == 0x01) {
+            Serial.printf("[WEA-DBG] display_weather() called: ui_init=%d, data_chg=%d, last_page=%d, coactus=%d\n",
+                          weather_ui_initialized, weather_data_changed, last_clock_page, run_data->coactusUpdateFlag);
+            display_weather(run_data->wea, anim_type);
+            weather_data_changed = false;
+            weather_ui_initialized = true;
+        }
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
             if (g_weather_now_req == NULL)
@@ -622,13 +647,29 @@ static void weather_process(AppController *sys,
             updateTime_RTC(ts);
         }
         run_data->coactusUpdateFlag = 0x00; // 取消强制更新标志
-        display_space();
+        // 动画帧率守护：按固定帧率刷新太空人动画，避免每帧调用 lv_img_set_src 触发 LVGL 自激振荡
+        if (GET_SYS_MILLIS() - last_space_anim_ms >= 300) {
+            last_space_anim_ms = GET_SYS_MILLIS();
+            display_space();
+        }
     }
     else if (run_data->clock_page == 1)
     {
-        // 仅在切换界面时获取一次未来天气
-        display_curve(run_data->wea.daily_max, run_data->wea.daily_min, anim_type);
+        // 页面切换守护：仅在首次渲染或切换到此页面时刷新曲线
+        if (!weather_ui_initialized || last_clock_page != 1) {
+            Serial.printf("[WEA-DBG] display_curve() called: ui_init=%d, last_page=%d\n",
+                          weather_ui_initialized, last_clock_page);
+            display_curve(run_data->wea.daily_max, run_data->wea.daily_min, anim_type);
+            weather_ui_initialized = true;
+        }
+        // 折线图为静态页面，无动画无定时刷新，切换为永久阻塞，仅手势唤醒
+        APP_OBJ *app = sys->getAppByName(WEATHER_APP_NAME);
+        if (app) {
+            app->loop_interval_ms = 0;
+            Serial.printf("[WEA-DBG] curve page: loop_interval_ms = 0 (permanent block)\n");
+        }
     }
+    last_clock_page = run_data->clock_page;
 }
 
 static void weather_background_task(AppController *sys,

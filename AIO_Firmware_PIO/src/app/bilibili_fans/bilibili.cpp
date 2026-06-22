@@ -68,6 +68,7 @@ struct MyHttpResult
 static B_Config cfg_data;
 static BilibiliAppRunData *run_data = NULL;
 static HttpRequest *g_bili_req = NULL;
+static bool bilibili_ui_initialized = false;
 
 static MyHttpResult http_request(String uid = "1666257451")
 {
@@ -112,6 +113,7 @@ static int bilibili_init(AppController *sys)
     run_data->follow_num = 0;
     run_data->refresh_status = 0;
     run_data->refresh_time_millis = GET_SYS_MILLIS() - cfg_data.updataInterval;
+    bilibili_ui_initialized = false;
     APP_OBJ *app = sys->getAppByName(BILI_APP_NAME);
     if (app) {
         app->loop_interval_ms = cfg_data.updataInterval;
@@ -190,7 +192,11 @@ static void bilibili_process(AppController *sys,
         }
     }
 
-    display_bilibili("bilibili", anim_type, fans_num, follow_num);
+    if (run_data->refresh_status == 1 || !bilibili_ui_initialized) {
+        display_bilibili("bilibili", anim_type, fans_num, follow_num);
+        run_data->refresh_status = 0;
+        bilibili_ui_initialized = true;
+    }
 
     // delay(300);  // 由 loop_interval_ms 替代
 }
