@@ -1,4 +1,6 @@
 #include "app_controller_gui.h"
+#include "serial_utils.h"
+
 // #include "lvgl.h"
 
 // 必须定义为全局或者静态
@@ -67,7 +69,8 @@ void display_app_scr_init(const void *src_img_path, const char *app_name)
     if (act_obj == app_scr)
     {
         // 防止一些不适用lvgl的APP退出 造成画面在无其他动作情况下无法绘制更新
-        lv_scr_load_anim(app_scr, LV_SCR_LOAD_ANIM_NONE, 300, 300, false);
+        lv_scr_load_anim(app_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+        lv_task_handler();
         return;
     }
 
@@ -84,7 +87,8 @@ void display_app_scr_init(const void *src_img_path, const char *app_name)
     lv_label_set_text(pre_app_name, app_name);
     lv_obj_align_to(pre_app_name, pre_app_image, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
-    lv_scr_load_anim(app_scr, LV_SCR_LOAD_ANIM_NONE, 300, 300, false);
+    lv_scr_load_anim(app_scr, LV_SCR_LOAD_ANIM_NONE, 0, 0, false);
+    lv_task_handler();
 }
 
 void app_control_display_scr(const void *src_img, const char *app_name, lv_scr_load_anim_t anim_type, bool force)
@@ -98,8 +102,10 @@ void app_control_display_scr(const void *src_img, const char *app_name, lv_scr_l
 
     if (src_img == pre_img_path)
     {
+        serial_printf("[APPCTRL] same image\n");
         return;
     }
+    serial_printf("[APPCTRL] diff image %s\n", app_name);
 
     pre_img_path = src_img;
     int now_start_x;
@@ -161,5 +167,6 @@ void app_control_display_scr(const void *src_img, const char *app_name, lv_scr_l
     lv_task_handler(); // 消除 ANIEND_WAIT 执行完后依然"卡顿一下"的问题
 
     lv_obj_del(pre_app_image); // 删除原先的图像
+    lv_refr_now(NULL);        // 强制立即刷新，避免脏区等待下次定时器到期
     pre_app_image = now_app_image;
 }

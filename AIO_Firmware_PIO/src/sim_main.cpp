@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
+#include <signal.h>
 
 extern void setup();
 extern void loop();
@@ -13,6 +14,48 @@ extern void loop();
 bool g_system_ready = false;
 
 extern TaskHandle_t g_app_main_task_handle;
+
+static void crash_handler(int sig)
+{
+    printf("\n========================================\n");
+    printf("[CRASH] Signal: %d\n", sig);
+
+    void *stack[64];
+    USHORT frames = CaptureStackBackTrace(0, 64, stack, NULL);
+
+    printf("[CRASH] Stack trace (%d frames):\n", frames);
+
+    char exe_path[MAX_PATH];
+    GetModuleFileNameA(NULL, exe_path, sizeof(exe_path));
+
+    for (USHORT i = 0; i < frames; i++) {
+        char cmd[512];
+        snprintf(cmd, sizeof(cmd),
+            "C:\\MyPrograms\\msys2\\mingw64\\bin\\addr2line.exe -e \"%s\" -f -C -p 0x%p 2>&1",
+            exe_path, stack[i]);
+
+        FILE *fp = popen(cmd, "r");
+        if (fp) {
+            char line[512];
+            if (fgets(line, sizeof(line), fp)) {
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                printf("  #%d: %s\n", i, line);
+            } else {
+                printf("  #%d: 0x%p\n", i, stack[i]);
+            }
+            pclose(fp);
+        } else {
+            printf("  #%d: 0x%p\n", i, stack[i]);
+        }
+    }
+
+    printf("========================================\n");
+    fflush(stdout);
+
+    signal(sig, SIG_DFL);
+    exit(1);
+}
 
 static void log_printf(const char *fmt, ...)
 {
@@ -53,6 +96,9 @@ int main(int argc, char *argv[])
     BaseType_t ret;
 
     auto_test_init(argc, argv);
+
+    signal(SIGSEGV, crash_handler);
+    signal(SIGABRT, crash_handler);
 
     printf("[SIM] main() start\n");
     fflush(stdout);

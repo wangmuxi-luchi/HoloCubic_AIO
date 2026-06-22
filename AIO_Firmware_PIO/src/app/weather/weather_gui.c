@@ -3,6 +3,10 @@
 
 #include "lvgl.h"
 
+#ifdef NATIVE_SIMULATION
+#include "serial_utils.h"
+#endif
+
 LV_FONT_DECLARE(lv_font_ibmplex_115);
 LV_FONT_DECLARE(lv_font_ibmplex_64);
 LV_FONT_DECLARE(ch_font20);
@@ -134,11 +138,34 @@ void display_curve(short maxT[], short minT[], lv_scr_load_anim_t anim_type)
 void display_weather_init(lv_scr_load_anim_t anim_type)
 {
     lv_obj_t *act_obj = lv_scr_act(); // 获取当前活动页
+#ifdef NATIVE_SIMULATION
+    serial_printf("[WEA-GUI] display_weather_init: act_obj=%p, scr_1=%p, scr_2=%p\n", act_obj, (void*)scr_1, (void*)scr_2);
+#endif
     if (act_obj == scr_1)
+    {
+#ifdef NATIVE_SIMULATION
+        serial_printf("[WEA-GUI] display_weather_init: act_obj == scr_1, skip\n");
+#endif
         return;
+    }
+
+    // 保护：scr_1 已创建但动画未完成（act_obj 还是旧页面），不要销毁它
+    if (scr_1 != NULL)
+    {
+#ifdef NATIVE_SIMULATION
+        serial_printf("[WEA-GUI] display_weather_init: scr_1 exists, skip (in transition)\n");
+#endif
+        return;
+    }
 
     weather_gui_release();
+#ifdef NATIVE_SIMULATION
+    serial_printf("[WEA-GUI] after weather_gui_release: scr_1=%p\n", (void*)scr_1);
+#endif
     lv_obj_clean(act_obj); // 清空此前页面
+#ifdef NATIVE_SIMULATION
+    serial_printf("[WEA-GUI] after lv_obj_clean, creating scr_1...\n");
+#endif
 
     scr_1 = lv_obj_create(NULL);
     lv_obj_add_style(scr_1, &default_style, LV_STATE_DEFAULT);
@@ -168,7 +195,7 @@ void display_weather_init(lv_scr_load_anim_t anim_type)
     // 宽度恒定等于当前文本的长度，所以下面先设置以下长度
     lv_label_set_text(txtLabel, "最低气温12°C, ");
     lv_obj_set_size(txtLabel, 120, 30);
-    lv_label_set_long_mode(txtLabel, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    // lv_label_set_long_mode(txtLabel, LV_LABEL_LONG_SCROLL_CIRCULAR); // 暂时禁用滚动字幕，避免30ms LVGL刷新干扰调试
     lv_label_set_text_fmt(txtLabel, "晴天, %s 0 级.   ", "风力");
     // lv_label_set_text_fmt(txtLabel, "最低气温%d°C, 最高气温%d°C, %s%d 级.   ", 15, 20, "西北风", 0);
 
@@ -284,10 +311,16 @@ void display_weather(struct Weather weaInfo, lv_scr_load_anim_t anim_type)
 
     if (LV_SCR_LOAD_ANIM_NONE != anim_type)
     {
+#ifdef NATIVE_SIMULATION
+        serial_printf("[WEA-GUI] display_weather: lv_scr_load_anim scr_1=%p anim_type=%d\n", (void*)scr_1, anim_type);
+#endif
         lv_scr_load_anim(scr_1, anim_type, 300, 300, false);
     }
     else
     {
+#ifdef NATIVE_SIMULATION
+        serial_printf("[WEA-GUI] display_weather: lv_scr_load scr_1=%p\n", (void*)scr_1);
+#endif
         lv_scr_load(scr_1);
     }
 }
