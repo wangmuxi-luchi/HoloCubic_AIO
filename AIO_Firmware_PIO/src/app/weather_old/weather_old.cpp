@@ -218,7 +218,7 @@ static int weather_init(AppController *sys)
     run_data->weather = {0, 0};
     APP_OBJ *app = sys->getAppByName(WEATHER_OLD_APP_NAME);
     if (app) {
-        app->loop_interval_ms = 100;
+        app->loop_interval_ms = 1000;
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }

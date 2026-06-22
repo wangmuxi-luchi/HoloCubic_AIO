@@ -126,6 +126,11 @@ static int picture_init(AppController *sys)
     TJpgDec.setJpgScale(1);
     // The decoder must be given the exact name of the rendering function above
     TJpgDec.setCallback(tft_output);
+
+    APP_OBJ *app = sys->getAppByName(PICTURE_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = cfg_data.switchInterval;
+    }
     return 0;
 }
 

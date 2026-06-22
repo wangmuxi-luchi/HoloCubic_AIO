@@ -320,6 +320,7 @@ static long long get_timestamp(void)
     // 使用本地的机器时钟
     run_data->preNetTimestamp = run_data->preNetTimestamp + (GET_SYS_MILLIS() - run_data->preLocalTimestamp);
     run_data->preLocalTimestamp = GET_SYS_MILLIS();
+    Serial.printf("[WEATHER] get_timestamp(local) preNetTimestamp=%lld\r\n", run_data->preNetTimestamp);
     return run_data->preNetTimestamp;
 }
 
@@ -422,7 +423,8 @@ static void updateTime_RTC(long long timestamp)
     t.minute = run_data->g_rtc.getMinute();
     t.second = run_data->g_rtc.getSecond();
     t.weekday = run_data->g_rtc.getDayofWeek();
-    // Serial.printf("time : %d-%d-%d\n",t.hour, t.minute, t.second);
+    Serial.printf("[WEATHER] updateTime_RTC timestamp=%lld -> %d-%02d-%02d %02d:%02d:%02d\r\n",
+                  timestamp, t.month, t.day, t.hour, t.minute, t.second);
     display_time(t, LV_SCR_LOAD_ANIM_NONE);
 }
 
@@ -459,7 +461,7 @@ static int weather_init(AppController *sys)
 
     APP_OBJ *app = sys->getAppByName(WEATHER_APP_NAME);
     if (app) {
-        app->loop_interval_ms = 30;
+        app->loop_interval_ms = 100;
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }
@@ -510,6 +512,7 @@ static void weather_process(AppController *sys,
 
     if (g_weather_ntp_req && g_weather_ntp_req->done)
     {
+        Serial.printf("[WEATHER] g_weather_ntp_req->done, http_code=%d\r\n", g_weather_ntp_req->http_code);
         __sync_synchronize();
         String payload = String(g_weather_ntp_req->response);
         if (g_weather_ntp_req->http_code > 0 && payload.length() > 0)
@@ -520,6 +523,8 @@ static void weather_process(AppController *sys,
             String time = payload.substring(time_index, time_end_index);
             run_data->preNetTimestamp = atoll(time.c_str()) + run_data->errorNetTimestamp + TIMEZERO_OFFSIZE;
             run_data->preLocalTimestamp = GET_SYS_MILLIS();
+            Serial.printf("[WEATHER] NTP response: raw=%s, preNetTimestamp=%lld, preLocalTimestamp=%lu\r\n",
+                          time.c_str(), run_data->preNetTimestamp, run_data->preLocalTimestamp);
         }
         else
         {
@@ -611,7 +616,10 @@ static void weather_process(AppController *sys,
         }
         else if (GET_SYS_MILLIS() - run_data->preLocalTimestamp > 400)
         {
-            updateTime_RTC(get_timestamp());
+            long long ts = get_timestamp();
+            Serial.printf("[WEATHER] local refresh: GET_SYS_MILLIS()=%lu, preLocalTimestamp=%lu, diff=%lu\r\n",
+                          GET_SYS_MILLIS(), run_data->preLocalTimestamp, GET_SYS_MILLIS() - run_data->preLocalTimestamp);
+            updateTime_RTC(ts);
         }
         run_data->coactusUpdateFlag = 0x00; // 取消强制更新标志
         display_space();

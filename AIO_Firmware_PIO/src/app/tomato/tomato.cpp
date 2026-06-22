@@ -75,7 +75,7 @@ static int tomato_init(AppController *sys)
                              run_data->rgb_cfg.brightness_step, run_data->rgb_cfg.time};
     APP_OBJ *app = sys->getAppByName(TOMATO_APP_NAME);
     if (app) {
-        app->loop_interval_ms = 333;
+        app->loop_interval_ms = 1000;
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }

@@ -152,7 +152,7 @@ static void bilibili_process(AppController *sys,
         }
         vPortFree(g_bili_req);
         g_bili_req = NULL;
-        return;
+        // 不 return，继续执行到 display_bilibili() 刷新 UI
     }
 
     char fans_num[20] = {0};

@@ -7,7 +7,7 @@
 
 #define ANNIVERSARY_APP_NAME "Anniversary"
 #define MAX_ANNIVERSARY_CNT 2
-#define TIME_API "http://api.m.taobao.com/rest/api3.do?api=mtop.common.gettimestamp"
+#define TIME_API "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/"
 
 bool tmfromString(const char *date_str, struct tm *date);
 
@@ -21,6 +21,7 @@ struct AN_Config
     struct tm current_date;
 };
 
+static long long get_timestamp(void);
 static long long get_timestamp(String url);
 
 static void write_config(AN_Config *cfg)
@@ -177,10 +178,11 @@ static int dateDiff(struct tm *date1, struct tm *date2)
 
 static void get_date_diff()
 {
-    time_t timep = run_data->preNetTimestamp / 1000;
+    long long timestamp = get_timestamp();
+    time_t timep = timestamp / 1000;
     struct tm *p_tm;
     // time(&timep);
-    p_tm = localtime(&timep);
+    p_tm = gmtime(&timep);
 
     cfg_data.current_date.tm_year = p_tm->tm_year + 1900;
     cfg_data.current_date.tm_mon = p_tm->tm_mon + 1;
@@ -197,6 +199,14 @@ static void date_update()
     anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]),
                                  run_data->anniversary_day_count,
                                  cfg_data.event_name[run_data->cur_anniversary].c_str());
+}
+
+static long long get_timestamp(void)
+{
+    // 使用本地的机器时钟
+    run_data->preNetTimestamp = run_data->preNetTimestamp + (GET_SYS_MILLIS() - run_data->preLocalTimestamp);
+    run_data->preLocalTimestamp = GET_SYS_MILLIS();
+    return run_data->preNetTimestamp;
 }
 
 static long long get_timestamp(String url)
@@ -216,8 +226,9 @@ static long long get_timestamp(String url)
         {
             String payload = http.getString();
             Serial.println(payload);
-            int time_index = (payload.indexOf("data")) + 12;
-            time = payload.substring(time_index, payload.length() - 3);
+            int time_index = payload.indexOf("\"t\":\"") + 5;
+            int time_end_index = payload.indexOf("\"", time_index);
+            time = payload.substring(time_index, time_end_index);
             // 以网络时间戳为准
             run_data->preNetTimestamp = atoll(time.c_str()) + run_data->errorNetTimestamp + TIMEZERO_OFFSIZE;
             run_data->preLocalTimestamp = GET_SYS_MILLIS();
@@ -270,8 +281,9 @@ static void anniversary_process(AppController *sys,
         if (g_anniv_req->http_code > 0 && payload.length() > 0)
         {
             Serial.println(payload);
-            int time_index = (payload.indexOf("data")) + 12;
-            String time = payload.substring(time_index, payload.length() - 3);
+            int time_index = payload.indexOf("\"t\":\"") + 5;
+            int time_end_index = payload.indexOf("\"", time_index);
+            String time = payload.substring(time_index, time_end_index);
             run_data->preNetTimestamp = atoll(time.c_str()) + run_data->errorNetTimestamp + TIMEZERO_OFFSIZE;
             run_data->preLocalTimestamp = GET_SYS_MILLIS();
         }
