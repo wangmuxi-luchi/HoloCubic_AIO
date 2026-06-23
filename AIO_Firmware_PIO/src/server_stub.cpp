@@ -2,7 +2,10 @@
 
 static int server_init(AppController *sys)
 {
-    (void)sys;
+    APP_OBJ *app = sys->getAppByName("WebServer");
+    if (app) {
+        app->loop_interval_ms = 30;
+    }
     return 0;
 }
 

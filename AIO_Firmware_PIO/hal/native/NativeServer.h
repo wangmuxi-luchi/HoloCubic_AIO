@@ -65,6 +65,7 @@ public:
     bool isClientConnected();
     bool isRunning() const { return _running; }
     SOCKET getClientSocket() const { return _clientSocket; }
+    SOCKET getListenSocket() const { return _listenSocket; }
 };
 
 #endif

@@ -1,6 +1,7 @@
 #include "SD.h"
 #include <cstdio>
 #include <cstring>
+#include <direct.h>
 #include <sys/stat.h>
 
 SDClass SD;
@@ -11,7 +12,7 @@ extern "C" {
 
 static char g_sdBasePath[512] = "";
 
-static void computeSdBasePath()
+static void ensureSdBasePath()
 {
     if (g_sdBasePath[0] != '\0') return;
     char exePath[512];
@@ -25,11 +26,18 @@ static void computeSdBasePath()
     lastSep = strrchr(exePath, '\\');
     if (lastSep) *lastSep = '\0';
     snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s\\sim_data\\sd", exePath);
+    _mkdir(g_sdBasePath);
+}
+
+const char* sd_get_base_path(void)
+{
+    ensureSdBasePath();
+    return g_sdBasePath;
 }
 
 static void toNativePath(const char *virtPath, char *nativePath, size_t size)
 {
-    computeSdBasePath();
+    ensureSdBasePath();
     if (virtPath[0] == '/') virtPath++;
     snprintf(nativePath, size, "%s\\%s", g_sdBasePath, virtPath);
     for (char *p = nativePath; *p; ++p)
