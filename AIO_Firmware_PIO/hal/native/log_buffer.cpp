@@ -10,6 +10,7 @@ static volatile uint32_t g_write_pos = 0;
 static uint32_t g_read_pos = 0;
 static HANDLE g_log_thread = NULL;
 static volatile bool g_log_running = false;
+static volatile int g_log_noise_filter = 0;
 
 static DWORD WINAPI log_consumer_thread(LPVOID param)
 {
@@ -28,8 +29,16 @@ static DWORD WINAPI log_consumer_thread(LPVOID param)
             if (c == '\n' || line_len >= (uint32_t)(sizeof(line) - 2)) {
                 line[line_len] = c;
                 line[line_len + 1] = '\0';
-                fwrite(line, 1, line_len + 1, stdout);
-                fflush(stdout);
+                int skip = 0;
+                if (g_log_noise_filter) {
+                    if (strstr(line, "[LOOP]") || strstr(line, "[APPCTRL]")) {
+                        skip = 1;
+                    }
+                }
+                if (!skip) {
+                    fwrite(line, 1, line_len + 1, stdout);
+                    fflush(stdout);
+                }
                 line_len = 0;
             } else {
                 line[line_len++] = c;
@@ -77,6 +86,11 @@ void log_buffer_write(const char *data, uint32_t len)
 
 void log_buffer_flush(void)
 {
+}
+
+void log_buffer_set_noise_filter(int enable)
+{
+    g_log_noise_filter = enable;
 }
 
 void log_buffer_shutdown(void)

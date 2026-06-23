@@ -141,6 +141,11 @@ static int server_init(AppController *sys)
     run_data->web_start = 0;
     run_data->req_sent = 0;
     run_data->serverReflushPreMillis = 0;
+
+    APP_OBJ *app = sys->getAppByName(SERVER_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 30;
+    }
     return 0;
 }
 

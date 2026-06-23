@@ -38,6 +38,11 @@ static int file_maneger_init(AppController *sys)
     run_data->serverReflushPreMillis = 0;
     run_data->recvBuf = (uint8_t *)calloc(1, RECV_BUFFER_SIZE);
     run_data->sendBuf = (uint8_t *)calloc(1, SEND_BUFFER_SIZE);
+
+    APP_OBJ *app = sys->getAppByName(FILE_MANAGER_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 30;
+    }
     return 0;
 }
 

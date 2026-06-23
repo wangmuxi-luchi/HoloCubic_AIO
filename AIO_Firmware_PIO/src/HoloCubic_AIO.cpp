@@ -38,7 +38,17 @@ TaskHandle_t g_app_main_task_handle = NULL;
 void actionCheckHandle(TimerHandle_t xTimer)
 {
     // IMU 动作检测
-    act_info = mpu.getAction();
+    // 持锁检查：如果 act_info 已有有效动作（由 inject_action_direct 注入），
+    // 则跳过本次定时器更新，避免覆盖已注入的动作
+    bool skip_update = false;
+    if (pdTRUE == xSemaphoreTake(g_action_mutex, portMAX_DELAY)) {
+        skip_update = (act_info->active != UNKNOWN && act_info->isValid);
+        xSemaphoreGive(g_action_mutex);
+    }
+    
+    if (!skip_update) {
+        act_info = mpu.getAction();
+    }
     
     // 检查是否有新动作需要通知主循环（持锁读取，保证一致性）
     bool has_action = false;

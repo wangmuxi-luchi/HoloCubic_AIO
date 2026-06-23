@@ -6,10 +6,14 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
+#include <FreeRTOS.h>
+#include <task.h>
 
 // 直接设置 act_info->active，绕过主循环阻塞问题
 // LHLXW 等 APP 的 process 函数有 while(1) 死循环，主循环无法更新 act_info
 extern ImuAction *act_info;
+extern TaskHandle_t g_app_main_task_handle;
+extern SemaphoreHandle_t g_action_mutex;
 
 // 动作类型枚举，与 hal_display.c 中的 hal_action_t 保持一致
 enum {
@@ -35,7 +39,36 @@ enum HookType {
     HOOK_SERVER_READY,  // 服务器路由就绪：等待 start_web_config() 完成
     HOOK_LHLXW_SUBAPP_RUNNING,  // LHLXW 子应用运行中：等待 hal_lhlxw_subapp_running=true
     HOOK_LHLXW_SUBAPP_EXITED,   // LHLXW 子应用已退出：等待 hal_lhlxw_subapp_running=false
+    HOOK_FTP_MKDIR,             // FTP 创建文件夹：发送 MKD 并验证 257 响应
+    HOOK_FTP_UPLOAD,            // FTP 上传文件：发送 STOR 并验证 226 响应
+    HOOK_FTP_DOWNLOAD,          // FTP 下载文件：发送 RETR 并验证内容一致
 };
+
+// 直接注入动作到 act_info 并唤醒主循环
+// 绕过 g_last_action 和 200ms 定时器，避免竞态条件
+// 持锁写入，防止与 actionCheckHandle 定时器产生竞态
+static void inject_action_direct(int action)
+{
+    if (act_info && g_action_mutex) {
+        if (pdTRUE == xSemaphoreTake(g_action_mutex, pdMS_TO_TICKS(100))) {
+            switch (action) {
+                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
+                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
+                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
+                case AUTO_ACTION_UP:         act_info->active = UP;         break;
+                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
+                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
+                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
+                default: break;
+            }
+            act_info->isValid = 1;
+            xSemaphoreGive(g_action_mutex);
+        }
+    }
+    if (g_app_main_task_handle) {
+        xTaskNotifyGive(g_app_main_task_handle);
+    }
+}
 
 // isCheckAction 的外部声明（HoloCubic_AIO.cpp 中定义）
 extern bool isCheckAction;
@@ -195,12 +228,15 @@ static const TestStep server_steps[] = {
     {3000, AUTO_ACTION_NONE,       HOOK_EXIT},         // 等待退出
 };
 
-// File Manager APP 测试（FTP 服务器）
+// File Manager APP 测试（FTP 服务器 + 文件夹创建/上传/下载）
 static const TestStep file_manager_steps[] = {
-    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},     // 等待进入
-    {3000, AUTO_ACTION_NONE,       HOOK_FTP_READY}, // 等待 FTP:21 就绪
-    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},      // 退出
-    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},       // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_FTP_READY},   // 等待 FTP:21 就绪
+    {3000, AUTO_ACTION_NONE,       HOOK_FTP_MKDIR},   // 创建文件夹
+    {3000, AUTO_ACTION_NONE,       HOOK_FTP_UPLOAD},  // 上传文件
+    {3000, AUTO_ACTION_NONE,       HOOK_FTP_DOWNLOAD},// 下载文件并验证内容
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},        // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},        // 等待退出
 };
 
 // LHLXW APP 测试：等 init → 轮流进入 3 个子应用(cyber/heartbeat/codeRain) → 退出
@@ -260,7 +296,7 @@ static const TestCase test_cases[] = {
     {"Settings",      3,  settings_steps,     9, 20},
     {"Idea",          4,  NULL,               0, 20},
     {"WebServer",     0,  server_steps,       5, 20},
-    {"File Manager",  0,  file_manager_steps, 4, 20},
+    {"File Manager",  0,  file_manager_steps, 7, 20},
     {"LH&LXW",        0,  LHLXW_steps,       20, 20},
     {"Stock",         0,  stockmarket_steps,  4, 20},
 };
@@ -419,6 +455,487 @@ static bool hook_ftp_ready_check(void)
     return false;
 }
 
+// ========================
+// FTP 操作钩子：MKDIR / UPLOAD / DOWNLOAD
+// 每个钩子自包含完整 FTP 会话（连接→登录→操作→退出）
+// 使用状态机在帧间推进，保证非阻塞
+// ========================
+
+// FTP 读取一行（从缓冲区中提取 \n 结尾的行）
+static int ftp_read_line(SOCKET sock, char *buf, int bufsize, int *buf_off, int *buf_len)
+{
+    // 先尝试从已有缓冲区中找完整行
+    for (int i = 0; i < *buf_len; i++) {
+        if ((*buf_off + i) < bufsize && buf[*buf_off + i] == '\n') {
+            int line_len = i + 1;
+            if (line_len < bufsize) {
+                memmove(buf, buf + *buf_off, line_len);
+                buf[line_len] = '\0';
+                *buf_off += line_len;
+                *buf_len -= line_len;
+                return line_len;
+            }
+        }
+    }
+    // 缓冲区已满，压缩
+    if (*buf_off > 0) {
+        memmove(buf, buf + *buf_off, *buf_len);
+        *buf_off = 0;
+    }
+    // 读取更多数据
+    int space = bufsize - *buf_len - 1;
+    if (space > 0) {
+        int n = recv(sock, buf + *buf_len, space, 0);
+        if (n > 0) {
+            *buf_len += n;
+            buf[*buf_len] = '\0';
+            // 递归再试一次
+            return ftp_read_line(sock, buf, bufsize, buf_off, buf_len);
+        }
+    }
+    return 0;
+}
+
+// 解析 PASV 227 响应，提取数据端口 (h1,h2,h3,h4,p1,p2)
+static int ftp_parse_pasv(const char *resp, int *port)
+{
+    int h1, h2, h3, h4, p1, p2;
+    if (sscanf(resp, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)",
+               &h1, &h2, &h3, &h4, &p1, &p2) == 6) {
+        *port = p1 * 256 + p2;
+        return 1;
+    }
+    return 0;
+}
+
+// FTP 上传文件内容
+static const char *FTP_UPLOAD_CONTENT = "HoloCubic Auto Test FTP Upload OK\r\n";
+static const int   FTP_UPLOAD_LEN     = 35;
+
+// ---- HOOK_FTP_MKDIR: 登录 + MKD auto_test_dir ----
+static bool hook_ftp_mkdir_check(void)
+{
+    enum { S_CONNECT, S_BANNER, S_USER, S_PASS_RESP, S_MKD, S_MKD_RESP, S_QUIT, S_DONE, S_FAIL } state;
+    static SOCKET sock = INVALID_SOCKET;
+    static char buf[1024];
+    static int buf_off = 0, buf_len = 0;
+    static int attempt = 0;
+    static int s_state = S_CONNECT;
+
+    if (s_state == S_DONE) {
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        s_state = S_CONNECT;
+        attempt = 0;
+        return true;
+    }
+    if (s_state == S_FAIL) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP MKDIR failed at state=%d", s_state);
+        closesocket(sock);
+        sock = INVALID_SOCKET;
+        s_state = S_CONNECT;
+        attempt = 0;
+        return true;
+    }
+
+    attempt++;
+
+    switch (s_state) {
+    case S_CONNECT:
+        sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) { s_state = S_FAIL; return false; }
+        {
+            u_long mode = 1;
+            ioctlsocket(sock, FIONBIO, &mode);
+            struct sockaddr_in addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(21);
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+            int ret = connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+            if (ret == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
+                s_state = S_FAIL; return false;
+            }
+        }
+        s_state = S_BANNER;
+        buf_off = buf_len = 0;
+        break;
+
+    case S_BANNER:
+        if (ftp_read_line(sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: banner=%.60s", buf);
+            send(sock, "USER holocubic\r\n", 16, 0);
+            s_state = S_USER;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_USER:
+        if (ftp_read_line(sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: USER resp=%.60s", buf);
+            send(sock, "PASS aio\r\n", 10, 0);
+            s_state = S_PASS_RESP;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_PASS_RESP:
+        if (ftp_read_line(sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: PASS resp=%.60s", buf);
+            send(sock, "MKD auto_test_dir\r\n", 19, 0);
+            s_state = S_MKD;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_MKD:
+        if (ftp_read_line(sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: MKD resp=%.60s", buf);
+            if (strncmp(buf, "257", 3) == 0) {
+                LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: SUCCESS - directory created");
+            } else {
+                LOG_ERROR(AUTO_TEST_TAG, "FTP MKDIR: FAILED (expected 257, got %.60s)", buf);
+            }
+            send(sock, "QUIT\r\n", 6, 0);
+            s_state = S_QUIT;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_QUIT:
+        if (attempt > 10) { s_state = S_DONE; }
+        break;
+    }
+
+    if (attempt > 3000) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP MKDIR: timeout at state=%d", s_state);
+        s_state = S_FAIL;
+    }
+    return false;
+}
+
+// ---- HOOK_FTP_UPLOAD: 登录 + PASV + STOR upload_test.txt ----
+static bool hook_ftp_upload_check(void)
+{
+    enum { S_CONNECT, S_BANNER, S_USER, S_PASS_RESP, S_PASV, S_PASV_RESP,
+           S_DATA_CONNECT, S_STOR, S_STOR_RESP, S_DATA_SEND, S_DATA_CLOSE,
+           S_CTRL_RESP, S_QUIT, S_DONE, S_FAIL } state;
+    static SOCKET ctrl_sock = INVALID_SOCKET;
+    static SOCKET data_sock = INVALID_SOCKET;
+    static char buf[1024];
+    static int buf_off = 0, buf_len = 0;
+    static int attempt = 0;
+    static int s_state = S_CONNECT;
+    static int data_port = 0;
+
+    if (s_state == S_DONE) {
+        closesocket(ctrl_sock);
+        ctrl_sock = INVALID_SOCKET;
+        s_state = S_CONNECT;
+        attempt = 0;
+        return true;
+    }
+    if (s_state == S_FAIL) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP UPLOAD failed at state=%d", s_state);
+        if (ctrl_sock != INVALID_SOCKET) { closesocket(ctrl_sock); ctrl_sock = INVALID_SOCKET; }
+        if (data_sock != INVALID_SOCKET) { closesocket(data_sock); data_sock = INVALID_SOCKET; }
+        s_state = S_CONNECT;
+        attempt = 0;
+        return true;
+    }
+
+    if (attempt == 1) LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: start, state=%d", s_state);
+    attempt++;
+
+    switch (s_state) {
+    case S_CONNECT:
+        LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: S_CONNECT attempt=%d", attempt);
+        ctrl_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (ctrl_sock == INVALID_SOCKET) {
+            LOG_ERROR(AUTO_TEST_TAG, "FTP UPLOAD: socket() failed err=%d", WSAGetLastError());
+            s_state = S_FAIL; return false;
+        }
+        {
+            u_long mode = 1;
+            ioctlsocket(ctrl_sock, FIONBIO, &mode);
+            struct sockaddr_in addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(21);
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+            int ret = connect(ctrl_sock, (struct sockaddr *)&addr, sizeof(addr));
+            if (ret == SOCKET_ERROR) {
+                int err = WSAGetLastError();
+                if (err != WSAEWOULDBLOCK) {
+                    LOG_ERROR(AUTO_TEST_TAG, "FTP UPLOAD: connect() failed err=%d", err);
+                    s_state = S_FAIL; return false;
+                }
+            }
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: connect() OK, moving to S_BANNER");
+        }
+        s_state = S_BANNER;
+        buf_off = buf_len = 0;
+        break;
+
+    case S_BANNER:
+        if (attempt <= 3 || attempt % 100 == 0) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: S_BANNER waiting attempt=%d buf_len=%d", attempt, buf_len);
+        }
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: banner=%.60s", buf);
+            send(ctrl_sock, "USER holocubic\r\n", 16, 0);
+            s_state = S_USER;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_USER:
+        if (attempt <= 5 || attempt % 100 == 0) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: S_USER waiting attempt=%d buf_len=%d", attempt, buf_len);
+        }
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: USER resp=%.60s", buf);
+            send(ctrl_sock, "PASS aio\r\n", 10, 0);
+            s_state = S_PASS_RESP;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_PASS_RESP:
+        if (attempt <= 5 || attempt % 100 == 0) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: S_PASS_RESP waiting attempt=%d buf_len=%d", attempt, buf_len);
+        }
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: PASS resp=%.60s", buf);
+            send(ctrl_sock, "PASV\r\n", 6, 0);
+            s_state = S_PASV;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_PASV:
+        if (attempt <= 5 || attempt % 100 == 0) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: S_PASV waiting attempt=%d buf_len=%d", attempt, buf_len);
+        }
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: PASV resp=%.80s", buf);
+            if (ftp_parse_pasv(buf, &data_port)) {
+                LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: data port=%d", data_port);
+                data_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if (data_sock != INVALID_SOCKET) {
+                    u_long mode = 1;
+                    ioctlsocket(data_sock, FIONBIO, &mode);
+                    struct sockaddr_in daddr;
+                    daddr.sin_family = AF_INET;
+                    daddr.sin_port = htons((u_short)data_port);
+                    daddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+                    connect(data_sock, (struct sockaddr *)&daddr, sizeof(daddr));
+                }
+                send(ctrl_sock, "STOR upload_test.txt\r\n", 22, 0);
+                s_state = S_STOR;
+            } else {
+                s_state = S_FAIL;
+            }
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_STOR:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: STOR resp=%.60s", buf);
+            s_state = S_DATA_SEND;
+        }
+        break;
+
+    case S_DATA_SEND:
+        if (data_sock != INVALID_SOCKET) {
+            send(data_sock, FTP_UPLOAD_CONTENT, FTP_UPLOAD_LEN, 0);
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: data sent (%d bytes)", FTP_UPLOAD_LEN);
+            closesocket(data_sock);
+            data_sock = INVALID_SOCKET;
+            s_state = S_CTRL_RESP;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_CTRL_RESP:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: final resp=%.60s", buf);
+            if (strncmp(buf, "226", 3) == 0) {
+                LOG_INFO(AUTO_TEST_TAG, "FTP UPLOAD: SUCCESS");
+            } else {
+                LOG_ERROR(AUTO_TEST_TAG, "FTP UPLOAD: unexpected response (expected 226)");
+            }
+            send(ctrl_sock, "QUIT\r\n", 6, 0);
+            s_state = S_QUIT;
+        }
+        break;
+
+    case S_QUIT:
+        if (attempt > 10) { s_state = S_DONE; }
+        break;
+    }
+
+    if (attempt > 3000) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP UPLOAD: timeout at state=%d", s_state);
+        s_state = S_FAIL;
+    }
+    return false;
+}
+
+// ---- HOOK_FTP_DOWNLOAD: 登录 + PASV + RETR upload_test.txt + 验证内容 ----
+static bool hook_ftp_download_check(void)
+{
+    enum { S_CONNECT, S_BANNER, S_USER, S_PASS_RESP, S_PASV, S_PASV_RESP,
+           S_DATA_CONNECT, S_RETR, S_RETR_RESP, S_DATA_RECV, S_DATA_CLOSE,
+           S_CTRL_RESP, S_QUIT, S_DONE, S_FAIL } state;
+    static SOCKET ctrl_sock = INVALID_SOCKET;
+    static SOCKET data_sock = INVALID_SOCKET;
+    static char buf[1024];
+    static char file_buf[256];
+    static int buf_off = 0, buf_len = 0;
+    static int file_len = 0;
+    static int attempt = 0;
+    static int s_state = S_CONNECT;
+    static int data_port = 0;
+
+    if (s_state == S_DONE) {
+        file_buf[file_len] = '\0';
+        if (strcmp(file_buf, FTP_UPLOAD_CONTENT) == 0) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: content verified OK");
+        } else {
+            LOG_ERROR(AUTO_TEST_TAG, "FTP DOWNLOAD: content mismatch! expected='%s' got='%s'",
+                      FTP_UPLOAD_CONTENT, file_buf);
+        }
+        closesocket(ctrl_sock);
+        ctrl_sock = INVALID_SOCKET;
+        s_state = S_CONNECT;
+        attempt = 0;
+        file_len = 0;
+        return true;
+    }
+    if (s_state == S_FAIL) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP DOWNLOAD failed at state=%d", s_state);
+        if (ctrl_sock != INVALID_SOCKET) { closesocket(ctrl_sock); ctrl_sock = INVALID_SOCKET; }
+        if (data_sock != INVALID_SOCKET) { closesocket(data_sock); data_sock = INVALID_SOCKET; }
+        s_state = S_CONNECT;
+        attempt = 0;
+        file_len = 0;
+        return true;
+    }
+
+    attempt++;
+
+    switch (s_state) {
+    case S_CONNECT:
+        ctrl_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (ctrl_sock == INVALID_SOCKET) { s_state = S_FAIL; return false; }
+        {
+            u_long mode = 1;
+            ioctlsocket(ctrl_sock, FIONBIO, &mode);
+            struct sockaddr_in addr;
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(21);
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+            int ret = connect(ctrl_sock, (struct sockaddr *)&addr, sizeof(addr));
+            if (ret == SOCKET_ERROR && WSAGetLastError() != WSAEWOULDBLOCK) {
+                s_state = S_FAIL; return false;
+            }
+        }
+        s_state = S_BANNER;
+        buf_off = buf_len = 0;
+        break;
+
+    case S_BANNER:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            send(ctrl_sock, "USER holocubic\r\n", 16, 0);
+            s_state = S_USER;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_USER:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            send(ctrl_sock, "PASS aio\r\n", 10, 0);
+            s_state = S_PASS_RESP;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_PASS_RESP:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            send(ctrl_sock, "PASV\r\n", 6, 0);
+            s_state = S_PASV;
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_PASV:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: PASV resp=%.80s", buf);
+            if (ftp_parse_pasv(buf, &data_port)) {
+                LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: data port=%d", data_port);
+                data_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+                if (data_sock != INVALID_SOCKET) {
+                    u_long mode = 1;
+                    ioctlsocket(data_sock, FIONBIO, &mode);
+                    struct sockaddr_in daddr;
+                    daddr.sin_family = AF_INET;
+                    daddr.sin_port = htons((u_short)data_port);
+                    daddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+                    connect(data_sock, (struct sockaddr *)&daddr, sizeof(daddr));
+                }
+                send(ctrl_sock, "RETR upload_test.txt\r\n", 22, 0);
+                s_state = S_RETR;
+            } else {
+                s_state = S_FAIL;
+            }
+            buf_off = buf_len = 0;
+        }
+        break;
+
+    case S_RETR:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: RETR resp=%.60s", buf);
+            s_state = S_DATA_RECV;
+            file_len = 0;
+        }
+        break;
+
+    case S_DATA_RECV:
+        if (data_sock != INVALID_SOCKET) {
+            int n = recv(data_sock, file_buf + file_len,
+                         (int)(sizeof(file_buf) - 1 - file_len), 0);
+            if (n > 0) {
+                file_len += n;
+                LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: received %d bytes (total %d)", n, file_len);
+            } else if (n == 0) {
+                closesocket(data_sock);
+                data_sock = INVALID_SOCKET;
+                s_state = S_CTRL_RESP;
+                // 不重置 buf_off/buf_len，控制通道可能已有 226 响应
+            }
+        }
+        break;
+
+    case S_CTRL_RESP:
+        if (ftp_read_line(ctrl_sock, buf, sizeof(buf), &buf_off, &buf_len)) {
+            LOG_INFO(AUTO_TEST_TAG, "FTP DOWNLOAD: final resp=%.60s", buf);
+            send(ctrl_sock, "QUIT\r\n", 6, 0);
+            s_state = S_QUIT;
+        }
+        break;
+
+    case S_QUIT:
+        if (attempt > 10) { s_state = S_DONE; }
+        break;
+    }
+
+    if (attempt > 3000) {
+        LOG_ERROR(AUTO_TEST_TAG, "FTP DOWNLOAD: timeout at state=%d", s_state);
+        s_state = S_FAIL;
+    }
+    return false;
+}
+
 // LHLXW 子应用运行中钩子：等待 hal_lhlxw_subapp_running 变为 true
 // 用于验证 UP 后子应用确实启动了
 static bool hook_lhlxw_subapp_running_check(void)
@@ -446,6 +963,9 @@ static bool check_hook(int hook_type)
     case HOOK_SERVER_READY:        return hook_server_ready_check();
     case HOOK_LHLXW_SUBAPP_RUNNING: return hook_lhlxw_subapp_running_check();
     case HOOK_LHLXW_SUBAPP_EXITED:  return hook_lhlxw_subapp_exited_check();
+    case HOOK_FTP_MKDIR:            return hook_ftp_mkdir_check();
+    case HOOK_FTP_UPLOAD:           return hook_ftp_upload_check();
+    case HOOK_FTP_DOWNLOAD:         return hook_ftp_download_check();
     case HOOK_NONE:
     default:                       return false;
     }
@@ -537,6 +1057,9 @@ void auto_test_init(int argc, char *argv[])
     }
 
     if (target) {
+        // 别名映射：命令行参数可能不含空格，但 APP 名称可能含空格
+        if (strcmp(target, "FileManager") == 0) target = "File Manager";
+        if (strcmp(target, "WebServer") == 0) target = "WebServer";
         test_state.target_app = target;
         LOG_INFO(AUTO_TEST_TAG, "Auto-test mode enabled, target: %s", target);
     }
@@ -592,7 +1115,7 @@ void auto_test_tick(void)
             // 首次进入：记录当前索引，发送第一个导航动作
             test_state.prev_app_index = cur_idx;
             int action = (test_state.dynamic_nav_steps > 0) ? AUTO_ACTION_TURN_RIGHT : AUTO_ACTION_TURN_LEFT;
-            hal_native_inject_action(action);
+            inject_action_direct(action);
             test_state.nav_counter = 1;
             test_state.nav_first_action_sent = true;
             test_state.frame_counter = 0;
@@ -611,7 +1134,7 @@ void auto_test_tick(void)
             if (test_state.nav_counter < abs(test_state.dynamic_nav_steps)) {
                 // 还有更多导航步骤
                 int action = (test_state.dynamic_nav_steps > 0) ? AUTO_ACTION_TURN_RIGHT : AUTO_ACTION_TURN_LEFT;
-                hal_native_inject_action(action);
+                inject_action_direct(action);
                 test_state.nav_counter++;
                 LOG_DEBUG(AUTO_TEST_TAG, "Nav step %d/%d: sent %s (hook triggered, index=%d)",
                           test_state.nav_counter, abs(test_state.dynamic_nav_steps),
@@ -631,7 +1154,7 @@ void auto_test_tick(void)
             // 强制执行剩余导航步骤以完成导航
             while (test_state.nav_counter < abs(test_state.dynamic_nav_steps)) {
                 int action = (test_state.dynamic_nav_steps > 0) ? AUTO_ACTION_TURN_RIGHT : AUTO_ACTION_TURN_LEFT;
-                hal_native_inject_action(action);
+                inject_action_direct(action);
                 test_state.nav_counter++;
             }
             test_state.phase = 1;
@@ -649,7 +1172,7 @@ void auto_test_tick(void)
         if (!test_state.enter_go_sent) {
             // 发送 GO_FORWORD 进入 APP
             test_state.prev_enter_flag = app_controller ? app_controller->app_exit_flag : 0;
-            hal_native_inject_action(AUTO_ACTION_GO_FORWORD);
+            inject_action_direct(AUTO_ACTION_GO_FORWORD);
             test_state.enter_go_sent = true;
             test_state.frame_counter = 0;
             LOG_DEBUG(AUTO_TEST_TAG, "Phase 1: GO_FORWORD sent (hook wait for app_exit_flag=1)");
@@ -697,18 +1220,7 @@ void auto_test_tick(void)
             if (test_state.frame_counter == 1
                 && step->hook_type != HOOK_NONE
                 && step->action != AUTO_ACTION_NONE) {
-                hal_native_inject_action(step->action);
-                if (act_info) {
-                    switch (step->action) {
-                        case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
-                        case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
-                        case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
-                        case AUTO_ACTION_UP:         act_info->active = UP;         break;
-                        case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
-                        case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
-                        case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
-                    }
-                }
+                inject_action_direct(step->action);
                 LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d (injected, waiting for hook)",
                           test_state.current_step + 1, tc->step_count, step->action);
             }
@@ -743,18 +1255,7 @@ void auto_test_tick(void)
                 // HOOK_NONE 步骤在完成时注入动作（延迟注入模式）
                 // 钩子类步骤已在首帧注入，这里只处理 HOOK_NONE
                 if (step->hook_type == HOOK_NONE && step->action != AUTO_ACTION_NONE) {
-                    hal_native_inject_action(step->action);
-                    if (act_info) {
-                        switch (step->action) {
-                            case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
-                            case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
-                            case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
-                            case AUTO_ACTION_UP:         act_info->active = UP;         break;
-                            case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
-                            case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
-                            case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
-                        }
-                    }
+                    inject_action_direct(step->action);
                     LOG_DEBUG(AUTO_TEST_TAG, "Step %d/%d: action=%d",
                               test_state.current_step + 1, tc->step_count, step->action);
                 }

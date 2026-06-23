@@ -15,4 +15,12 @@ public:
 
 extern SDClass SD;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+const char* sd_get_base_path(void);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* SD_STUB_H */

@@ -105,6 +105,8 @@ int main(int argc, char *argv[])
 
     log_buffer_init();
 
+    log_buffer_set_noise_filter(1);
+
     // 创建 SDL 线程（窗口 + 事件 + 渲染 + auto_test）
     // 对应真实硬件中的 SPI 总线 + GPIO 中断，独立于 APP 逻辑运行
     HANDLE hSdlThread = CreateThread(NULL, 0, sdl_thread_entry, NULL, 0, NULL);
