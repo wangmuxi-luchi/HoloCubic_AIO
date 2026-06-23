@@ -260,6 +260,7 @@ static int anniversary_init(AppController *sys)
     run_data->preWeatherMillis = 0;
     run_data->preTimeMillis = 0;
     run_data->coactusUpdateFlag = 0x01;
+    anniversary_app.loop_interval_ms = 60000; // 每分钟检查一次日期变化
     Serial.printf("anniversary init successful\n");
     return 0;
 }
@@ -267,6 +268,10 @@ static int anniversary_init(AppController *sys)
 static void anniversary_process(AppController *sys,
                                 const ImuAction *act_info)
 {
+    static bool anniversary_ui_initialized = false;
+    static int last_cur_anniversary = -1;
+    static int last_day_count = -9999;
+
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_NONE;
     if (RETURN == act_info->active)
     {
@@ -329,8 +334,20 @@ static void anniversary_process(AppController *sys,
     // Serial.printf("%d %d %d %d", cfg_data.target_date[run_data->cur_anniversary].tm_year,  cfg_data.target_date[run_data->cur_anniversary].tm_mon,  cfg_data.target_date[run_data->cur_anniversary].tm_mday,  cfg_data.target_date[run_data->cur_anniversary].tm_wday);
     // Serial.println(F(""));
     // Serial.println(F(cfg_data.event_name[run_data->cur_anniversary].c_str()));
-    display_anniversary("anniversary", anim_type, &(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
-    anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+    // 只有在页面首次加载或切换纪念日时才重建 UI
+    if (!anniversary_ui_initialized || last_cur_anniversary != run_data->cur_anniversary)
+    {
+        display_anniversary("anniversary", anim_type, &(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+        last_cur_anniversary = run_data->cur_anniversary;
+        anniversary_ui_initialized = true;
+    }
+
+    // 只有在日期变化（天数变化）时才更新显示
+    if (last_day_count != run_data->anniversary_day_count)
+    {
+        anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+        last_day_count = run_data->anniversary_day_count;
+    }
     // 发送请求。如果是wifi相关的消息，当请求完成后自动会调用 anniversary_message_handle 函数
     // sys->send_to(ANNIVERSARY_APP_NAME, CTRL_NAME,
     //              APP_MESSAGE_WIFI_CONN, (void *)run_data->val1, NULL);

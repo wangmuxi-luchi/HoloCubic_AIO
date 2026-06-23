@@ -190,6 +190,10 @@ struct HeartbeatAppRunData
 
 // 保存APP运行时的参数信息，理论上关闭APP时推荐在 xxx_exit_callback 中释放掉
 static HeartbeatAppRunData *run_data = NULL;
+static bool heartbeat_ui_initialized = false;
+static uint8_t last_send_cnt = 0xFF;
+static uint8_t last_recv_cnt = 0xFF;
+static unsigned long last_heartbeat_anim_ms = 0;
 
 // 当然你也可以添加恒定在内存中的少量变量（退出时不用释放，实现第二次启动时可以读取）
 
@@ -237,6 +241,10 @@ static int heartbeat_init(AppController *sys)
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }
+    heartbeat_ui_initialized = false;
+    last_send_cnt = 0xFF;
+    last_recv_cnt = 0xFF;
+    last_heartbeat_anim_ms = 0;
     return 0;
 }
 
@@ -310,9 +318,20 @@ static void heartbeat_process(AppController *sys,
     }
 
     // 程序需要时可以适当加延时
-    display_heartbeat("heartbeat", anim_type);
-    heartbeat_set_send_recv_cnt_label(run_data->send_cnt, run_data->recv_cnt);
-    display_heartbeat_img();
+    if (!heartbeat_ui_initialized || anim_type != LV_SCR_LOAD_ANIM_NONE) {
+        display_heartbeat("heartbeat", anim_type);
+        heartbeat_ui_initialized = true;
+    }
+    if (!heartbeat_ui_initialized || run_data->send_cnt != last_send_cnt || run_data->recv_cnt != last_recv_cnt) {
+        heartbeat_set_send_recv_cnt_label(run_data->send_cnt, run_data->recv_cnt);
+        last_send_cnt = run_data->send_cnt;
+        last_recv_cnt = run_data->recv_cnt;
+    }
+    // 动画帧率守护：按固定帧率刷新图片动画，避免每帧调用 lv_img_set_src 触发 LVGL 自激振荡
+    if (GET_SYS_MILLIS() - last_heartbeat_anim_ms >= 50) {
+        last_heartbeat_anim_ms = GET_SYS_MILLIS();
+        display_heartbeat_img();
+    }
     // delay(30);  // 由 loop_interval_ms 替代
 }
 

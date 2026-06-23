@@ -30,6 +30,9 @@ struct TomatoAppForeverData
 
 static bool hadOpened = false;
 
+static bool tomato_ui_initialized = false;
+static unsigned long last_tomato_display_ms = 0;
+
 // 保存APP运行时的参数信息，理论上关闭APP时推荐在 xxx_exit_callback 中释放掉
 static TomatoAppRunData *run_data = NULL;
 
@@ -79,6 +82,8 @@ static int tomato_init(AppController *sys)
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }
+    tomato_ui_initialized = false;
+    last_tomato_display_ms = 0;
     return 0;
 }
 static void time_switch()
@@ -362,7 +367,12 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
         run_data->t.minute = run_data->time_ms / 60 / 1000;
     }
     // Serial.print(run_data->rgb_fast);
-    display_tomato(run_data->t, run_data->time_mode);
+    // 时间间隔守护：番茄钟只需秒级刷新，避免每帧调用 lv_label_set_text_fmt 触发 LVGL 自激振荡
+    if (!tomato_ui_initialized || GET_SYS_MILLIS() - last_tomato_display_ms >= 1000) {
+        last_tomato_display_ms = GET_SYS_MILLIS();
+        display_tomato(run_data->t, run_data->time_mode);
+        tomato_ui_initialized = true;
+    }
 }
 
 static int tomato_exit_callback(void *param)

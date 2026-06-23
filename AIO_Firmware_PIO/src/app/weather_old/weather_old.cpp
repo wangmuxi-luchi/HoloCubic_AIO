@@ -94,6 +94,10 @@ enum WeatherOldReqType { REQ_NONE = 0, REQ_WEATHER, REQ_TIME };
 static HttpRequest *g_weather_old_req = NULL;
 static WeatherOldReqType g_weather_old_req_type = REQ_NONE;
 
+static bool weather_old_ui_initialized = false;
+static int last_old_clock_page = -1;
+static unsigned long last_time_update_ms = 0;
+
 static Weather getWeather(void)
 {
     return run_data->weather;
@@ -222,6 +226,9 @@ static int weather_init(AppController *sys)
         app->fixed_fps_mode = true;
         app->last_frame_ms = GET_SYS_MILLIS();
     }
+    weather_old_ui_initialized = false;
+    last_old_clock_page = -1;
+    last_time_update_ms = 0;
     return 0;
 }
 
@@ -298,8 +305,12 @@ static void weather_process(AppController *sys,
 
     if (0 == run_data->clock_page) // 更新天气
     {
-        Weather weather = getWeather();
-        UpdateWeather(&weather, anim_type);
+        // 页面切换守护：仅在首次渲染、切换到此页面或强制更新时刷新天气UI
+        if (!weather_old_ui_initialized || last_old_clock_page != 0 || run_data->coactusUpdateFlag == 0x01) {
+            Weather weather = getWeather();
+            UpdateWeather(&weather, anim_type);
+            weather_old_ui_initialized = true;
+        }
         // 以下减少网络请求的压力
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
@@ -320,9 +331,12 @@ static void weather_process(AppController *sys,
     // 界面刷新
     if (1 == run_data->clock_page) // 更新时钟
     {
-        // 使用本地的机器时钟
-        long long timestamp = getTimestamp() + TIMEZERO_OFFSIZE; // nowapi时间API
-        UpdateTime_RTC(timestamp, anim_type);
+        // 时间间隔守护：按固定帧率刷新时间显示，避免每帧调用 lv_label_set_text_fmt 触发 LVGL 自激振荡
+        if (GET_SYS_MILLIS() - last_time_update_ms >= 1000) {
+            last_time_update_ms = GET_SYS_MILLIS();
+            long long timestamp = getTimestamp() + TIMEZERO_OFFSIZE; // nowapi时间API
+            UpdateTime_RTC(timestamp, anim_type);
+        }
         // 以下减少网络请求的压力
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))
         {
@@ -339,8 +353,13 @@ static void weather_process(AppController *sys,
     }
     else if (2 == run_data->clock_page) // NULL后期可以是具体数据
     {
-        display_hardware_old(NULL, anim_type);
+        // 页面切换守护：仅在首次渲染或切换到此页面时刷新硬件信息
+        if (!weather_old_ui_initialized || last_old_clock_page != 2) {
+            display_hardware_old(NULL, anim_type);
+            weather_old_ui_initialized = true;
+        }
     }
+    last_old_clock_page = run_data->clock_page;
 }
 
 static void weather_background_task(AppController *sys,
