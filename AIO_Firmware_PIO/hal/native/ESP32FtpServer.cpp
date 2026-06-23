@@ -1,4 +1,6 @@
 #include "ESP32FtpServer.h"
+#include "SD.h"
+#include "serial_utils.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -27,6 +29,7 @@ void FtpServer::begin(const String &uname, const String &pword)
     strncpy(_user, uname.c_str(), sizeof(_user) - 1);
     strncpy(_pass, pword.c_str(), sizeof(_pass) - 1);
     _ctrlServer.begin();
+    CreateDirectoryA(sd_get_base_path(), NULL);
     printf("[FtpServer] Started on port 21\n");
 }
 
@@ -209,7 +212,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             newPath.erase(p, 1);
         }
 
-        std::string sdPath = "sim_data/sd" + newPath;
+        std::string sdPath = sd_get_base_path() + newPath;
         if (sdPath.back() != '/')
             sdPath += "/";
 
@@ -253,7 +256,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("550", "No directory name");
             return;
         }
-        std::string sdPath = "sim_data/sd" + std::string(_cwd);
+        std::string sdPath = sd_get_base_path() + std::string(_cwd);
         if (sdPath.back() != '/')
             sdPath += "/";
         sdPath += arg;
@@ -275,7 +278,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("550", "No directory name");
             return;
         }
-        std::string sdPath = "sim_data/sd" + std::string(_cwd);
+        std::string sdPath = sd_get_base_path() + std::string(_cwd);
         if (sdPath.back() != '/')
             sdPath += "/";
         sdPath += arg;
@@ -295,7 +298,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("550", "No file name");
             return;
         }
-        std::string sdPath = "sim_data/sd" + std::string(_cwd);
+        std::string sdPath = sd_get_base_path() + std::string(_cwd);
         if (sdPath.back() != '/')
             sdPath += "/";
         sdPath += arg;
@@ -315,7 +318,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("550", "No file name");
             return;
         }
-        std::string sdPath = "sim_data/sd" + std::string(_cwd);
+        std::string sdPath = sd_get_base_path() + std::string(_cwd);
         if (sdPath.back() != '/')
             sdPath += "/";
         sdPath += arg;
@@ -340,7 +343,7 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("550", "No file name");
             return;
         }
-        std::string sdPath = "sim_data/sd" + std::string(_cwd);
+        std::string sdPath = sd_get_base_path() + std::string(_cwd);
         if (sdPath.back() != '/')
             sdPath += "/";
         sdPath += arg;
@@ -363,23 +366,28 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
     }
     else if (strcmp(cmd, "PASV") == 0)
     {
+        serial_printf("[FTP_SRV] PASV: received, creating data server...\n");
         _closeData();
+        _responseBuffer.clear();  // _closeData() 追加了 226，但 PASV 不需要
 
         _dataServer = NativeServer(0);
         if (!_dataServer.begin())
         {
+            serial_printf("[FTP_SRV] PASV: data server begin() FAILED\n");
             _resp("425", "Cannot open data connection");
             return;
         }
 
         sockaddr_in addr;
         int addrLen = sizeof(addr);
-        getsockname(_dataServer.getClientSocket(), (sockaddr *)&addr, &addrLen);
+        getsockname(_dataServer.getListenSocket(), (sockaddr *)&addr, &addrLen);
         _dataPort = ntohs(addr.sin_port);
 
+        serial_printf("[FTP_SRV] PASV: data port=%d\n", _dataPort);
         char msg[128];
         snprintf(msg, sizeof(msg), "Entering Passive Mode (127,0,0,1,%d,%d)",
                  _dataPort >> 8, _dataPort & 0xFF);
+        serial_printf("[FTP_SRV] PASV: response=%s\n", msg);
         _resp("227", msg);
         _dataPassive = true;
     }
@@ -421,12 +429,12 @@ void FtpServer::_processCommand(const char *cmd, const char *arg)
             _resp("503", "RNFR required first");
             return;
         }
-        std::string sdFrom = "sim_data/sd" + std::string(_cwd);
+        std::string sdFrom = sd_get_base_path() + std::string(_cwd);
         if (sdFrom.back() != '/')
             sdFrom += "/";
         sdFrom += _rnfr;
 
-        std::string sdTo = "sim_data/sd" + std::string(_cwd);
+        std::string sdTo = sd_get_base_path() + std::string(_cwd);
         if (sdTo.back() != '/')
             sdTo += "/";
         sdTo += arg;
@@ -490,7 +498,7 @@ void FtpServer::_closeData()
 
 void FtpServer::_doList(const char *arg)
 {
-    std::string sdPath = "sim_data/sd";
+    std::string sdPath = sd_get_base_path();
     std::string searchPath = sdPath + std::string(_cwd);
     if (searchPath.back() != '/')
         searchPath += "/";
@@ -546,7 +554,7 @@ void FtpServer::_doRetrieve(const char *arg)
         return;
     }
 
-    std::string sdPath = "sim_data/sd" + std::string(_cwd);
+    std::string sdPath = sd_get_base_path() + std::string(_cwd);
     if (sdPath.back() != '/')
         sdPath += "/";
     sdPath += arg;
@@ -575,7 +583,7 @@ void FtpServer::_doStore(const char *arg)
         return;
     }
 
-    std::string sdPath = "sim_data/sd" + std::string(_cwd);
+    std::string sdPath = sd_get_base_path() + std::string(_cwd);
     if (sdPath.back() != '/')
         sdPath += "/";
     sdPath += arg;
@@ -589,9 +597,24 @@ void FtpServer::_doStore(const char *arg)
 
     char buf[4096];
     int n;
-    while ((n = _dataServer.read(buf, (int)sizeof(buf))) > 0)
+    int timeout = 0;
+    while (timeout < 500)
     {
-        fwrite(buf, 1, n, f);
+        n = _dataServer.read(buf, (int)sizeof(buf));
+        if (n > 0)
+        {
+            fwrite(buf, 1, n, f);
+            timeout = 0;  // 收到数据，重置超时
+        }
+        else if (n == 0)
+        {
+            break;  // 连接关闭
+        }
+        else
+        {
+            Sleep(10);  // 无数据，等待 10ms
+            timeout++;
+        }
     }
     fclose(f);
 }
