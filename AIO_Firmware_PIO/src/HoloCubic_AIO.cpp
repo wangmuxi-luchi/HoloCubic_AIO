@@ -21,7 +21,10 @@
 #include <SPIFFS.h>
 #include <esp32-hal.h>
 #include <esp32-hal-timer.h>
+#include <FreeRTOS.h>
+#include <task.h>
 
+TaskHandle_t g_app_main_task_handle = NULL;
 bool isCheckAction = false;
 
 /*** Component objects **7*/

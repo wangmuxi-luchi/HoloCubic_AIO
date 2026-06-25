@@ -37,7 +37,9 @@ public:
     WiFiClient(int fd);
     ~WiFiClient();
     WiFiClient(const WiFiClient &other);
+    WiFiClient(WiFiClient &&other);
     WiFiClient &operator=(const WiFiClient &other);
+    WiFiClient &operator=(WiFiClient &&other);
 
     int connect(IPAddress ip, uint16_t port) override;
     int connect(const char *host, uint16_t port) override;
@@ -78,6 +80,7 @@ public:
     void close();
     void setNoDelay(bool nodelay);
     WiFiClient available();
+    bool hasClient();
     uint8_t status();
 
 private:
