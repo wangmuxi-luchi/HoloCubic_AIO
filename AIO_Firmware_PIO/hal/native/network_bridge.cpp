@@ -98,6 +98,12 @@ WiFiClient::WiFiClient(const WiFiClient &other)
     }
 }
 
+WiFiClient::WiFiClient(WiFiClient &&other)
+{
+    _sock = other._sock;
+    other._sock = -1;
+}
+
 WiFiClient &WiFiClient::operator=(const WiFiClient &other)
 {
     if (this != &other)
@@ -107,6 +113,17 @@ WiFiClient &WiFiClient::operator=(const WiFiClient &other)
         {
             _sock = other._sock;
         }
+    }
+    return *this;
+}
+
+WiFiClient &WiFiClient::operator=(WiFiClient &&other)
+{
+    if (this != &other)
+    {
+        _close();
+        _sock = other._sock;
+        other._sock = -1;
     }
     return *this;
 }
@@ -217,9 +234,11 @@ int WiFiClient::read()
 
 int WiFiClient::read(uint8_t *buf, size_t size)
 {
-    if (_sock < 0) return 0;
+    if (_sock < 0) return -1;
     int n = recv(_sock, (char *)buf, (int)size, 0);
-    return n > 0 ? n : 0;
+    if (n > 0) return n;
+    if (n == 0) return 0;
+    return -1;
 }
 
 int WiFiClient::peek()
@@ -394,6 +413,19 @@ WiFiClient WiFiServer::available()
 uint8_t WiFiServer::status()
 {
     return _listening ? 1 : 0;
+}
+
+bool WiFiServer::hasClient()
+{
+    if (_sock < 0) return false;
+
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(_sock, &readfds);
+
+    struct timeval tv = {0, 0};
+    int ret = select(0, &readfds, NULL, NULL, &tv);
+    return ret > 0 && FD_ISSET(_sock, &readfds);
 }
 
 // ==================== HTTPClient ====================
