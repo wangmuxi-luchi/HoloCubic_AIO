@@ -51,13 +51,14 @@ public:
     void setAddrWindow(int32_t x, int32_t y, int32_t w, int32_t h);
     void startWrite(void) {}
     void pushColors(const void *data, uint32_t len, bool swap);
+    void pushColors(const void *data, uint32_t len) { pushColors(data, len, false); }
     void endWrite(void) {}
     void setRotation(uint8_t r) { (void)r; }
     uint8_t readcommand8(uint8_t cmd, uint8_t index) { (void)cmd; (void)index; return 0; }
     void pushPixels(const void *data, uint32_t len);
     bool getSwapBytes(void) { return false; }
     void setSwapBytes(bool swap) { (void)swap; }
-    void pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *bitmap, uint16_t *dmaBuffer) { (void)x; (void)y; (void)w; (void)h; (void)bitmap; (void)dmaBuffer; }
+    void pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *bitmap, uint16_t *dmaBuffer);
     void initDMA(void) {}
 
     // 文本状态（公开，供 drawChar 内部使用）

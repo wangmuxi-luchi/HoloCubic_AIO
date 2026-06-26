@@ -470,3 +470,9 @@ void TFT_eSPI::pushPixels(const void *data, uint32_t len)
 {
     pushColors(data, len, false);
 }
+
+void TFT_eSPI::pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *bitmap, uint16_t *dmaBuffer)
+{
+    (void)dmaBuffer;
+    pushImage(x, y, w, h, bitmap);
+}
