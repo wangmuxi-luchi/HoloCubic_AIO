@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <utility>
+#include <string>
 
 // Global FTP server objects (same as real implementation)
 WiFiServer ftpServer(FTP_CTRL_PORT);
@@ -33,6 +34,8 @@ void FtpServer::begin(const String &uname, const String &pword)
 
 void FtpServer::handleFTP()
 {
+    std::string _responseBuffer;
+
     // 先检查是否有新客户端等待连接（即使当前客户端仍连接）
     if (ftpServer.hasClient())
     {
@@ -44,7 +47,9 @@ void FtpServer::handleFTP()
         cmdLine[0] = '\0';
         dataPassiveConn = false;
         rnfrCmd = false;
-        client.println("220 HoloCubic FTP Server Ready");
+        millisEndConnection = (uint32_t)time(nullptr) + FTP_TIME_OUT * 60000;
+        _responseBuffer += "220 HoloCubic FTP Server Ready\r\n";
+        client.print(_responseBuffer.c_str());
         printf("[FtpServer] Client connected (hasClient)\n");
         return;
     }
@@ -61,13 +66,25 @@ void FtpServer::handleFTP()
             cmdLine[0] = '\0';
             dataPassiveConn = false;
             rnfrCmd = false;
-            client.println("220 HoloCubic FTP Server Ready");
+            millisEndConnection = (uint32_t)time(nullptr) + FTP_TIME_OUT * 60000;
+            _responseBuffer += "220 HoloCubic FTP Server Ready\r\n";
+            client.print(_responseBuffer.c_str());
             printf("[FtpServer] Client connected\n");
         }
         else
         {
             return;
         }
+    }
+
+    // 超时断连检查
+    if ((uint32_t)time(nullptr) > millisEndConnection)
+    {
+        _responseBuffer += "421 Timeout\r\n";
+        client.print(_responseBuffer.c_str());
+        client.stop();
+        printf("[FtpServer] Timeout, disconnecting\n");
+        return;
     }
 
     // Read commands from client
@@ -83,6 +100,8 @@ void FtpServer::handleFTP()
 
             printf("[FtpServer] -> %s\n", cmdLine);
 
+            millisEndConnection = (uint32_t)time(nullptr) + FTP_TIME_OUT * 60000;
+
             char *cmd = cmdLine;
             char *arg = strchr(cmd, ' ');
             if (arg)
@@ -97,50 +116,50 @@ void FtpServer::handleFTP()
             if (strcmp(cmd, "USER") == 0)
             {
                 if (arg && strcmp(arg, _FTP_USER.c_str()) == 0)
-                    client.println("331 Password required");
+                    _responseBuffer += "331 Password required\r\n";
                 else
-                    client.println("530 Invalid username");
+                    _responseBuffer += "530 Invalid username\r\n";
             }
             else if (strcmp(cmd, "PASS") == 0)
             {
                 if (arg && strcmp(arg, _FTP_PASS.c_str()) == 0)
                 {
                     _authenticated = true;
-                    client.println("230 User logged in");
+                    _responseBuffer += "230 User logged in\r\n";
                 }
                 else
-                    client.println("530 Login incorrect");
+                    _responseBuffer += "530 Login incorrect\r\n";
             }
             else if (!_authenticated)
             {
-                client.println("530 Not logged in");
+                _responseBuffer += "530 Not logged in\r\n";
             }
             else if (strcmp(cmd, "SYST") == 0)
             {
-                client.println("215 UNIX Type: L8");
+                _responseBuffer += "215 UNIX Type: L8\r\n";
             }
             else if (strcmp(cmd, "FEAT") == 0)
             {
-                client.println("211-Features:");
-                client.println(" SIZE");
-                client.println(" MDTM");
-                client.println("211 End");
+                _responseBuffer += "211-Features:\r\n";
+                _responseBuffer += " SIZE\r\n";
+                _responseBuffer += " MDTM\r\n";
+                _responseBuffer += "211 End\r\n";
             }
             else if (strcmp(cmd, "TYPE") == 0)
             {
-                client.println("200 Type set to I");
+                _responseBuffer += "200 Type set to I\r\n";
             }
             else if (strcmp(cmd, "PWD") == 0)
             {
                 char msg[512];
-                snprintf(msg, sizeof(msg), "257 \"%s\" is current directory", cwdName);
-                client.println(msg);
+                snprintf(msg, sizeof(msg), "257 \"%s\" is current directory\r\n", cwdName);
+                _responseBuffer += msg;
             }
             else if (strcmp(cmd, "CWD") == 0)
             {
                 if (!arg || arg[0] == '\0')
                 {
-                    client.println("550 No directory specified");
+                    _responseBuffer += "550 No directory specified\r\n";
                 }
                 else
                 {
@@ -154,6 +173,18 @@ void FtpServer::handleFTP()
                         newPath += arg;
                     }
 
+                    // 路径规范化
+                    while (newPath.find("/./") != std::string::npos)
+                    {
+                        size_t p = newPath.find("/./");
+                        newPath.erase(p, 2);
+                    }
+                    while (newPath.find("//") != std::string::npos)
+                    {
+                        size_t p = newPath.find("//");
+                        newPath.erase(p, 1);
+                    }
+
                     std::string sdPath = sd_get_base_path() + newPath;
                     if (sdPath.back() != '/') sdPath += "/";
 
@@ -161,13 +192,13 @@ void FtpServer::handleFTP()
                     HANDLE h = FindFirstFileA((sdPath + "*").c_str(), &fd);
                     if (h == INVALID_HANDLE_VALUE)
                     {
-                        client.println("550 Directory not found");
+                        _responseBuffer += "550 Directory not found\r\n";
                     }
                     else
                     {
                         FindClose(h);
                         strncpy(cwdName, newPath.c_str(), FTP_CWD_SIZE - 1);
-                        client.println("250 Directory changed");
+                        _responseBuffer += "250 Directory changed\r\n";
                     }
                 }
             }
@@ -175,7 +206,7 @@ void FtpServer::handleFTP()
             {
                 if (strcmp(cwdName, "/") == 0)
                 {
-                    client.println("250 Already at root");
+                    _responseBuffer += "250 Already at root\r\n";
                 }
                 else
                 {
@@ -184,14 +215,14 @@ void FtpServer::handleFTP()
                         cwdName[1] = '\0';
                     else if (lastSlash)
                         *lastSlash = '\0';
-                    client.println("250 Directory changed");
+                    _responseBuffer += "250 Directory changed\r\n";
                 }
             }
             else if (strcmp(cmd, "MKD") == 0)
             {
                 if (!arg)
                 {
-                    client.println("550 No directory name");
+                    _responseBuffer += "550 No directory name\r\n";
                 }
                 else
                 {
@@ -201,18 +232,18 @@ void FtpServer::handleFTP()
                     if (CreateDirectoryA(sdPath.c_str(), NULL) || GetLastError() == ERROR_ALREADY_EXISTS)
                     {
                         char msg[512];
-                        snprintf(msg, sizeof(msg), "257 \"%s\" created", arg);
-                        client.println(msg);
+                        snprintf(msg, sizeof(msg), "257 \"%s\" created\r\n", arg);
+                        _responseBuffer += msg;
                     }
                     else
-                        client.println("550 Create directory failed");
+                        _responseBuffer += "550 Create directory failed\r\n";
                 }
             }
             else if (strcmp(cmd, "RMD") == 0)
             {
                 if (!arg)
                 {
-                    client.println("550 No directory name");
+                    _responseBuffer += "550 No directory name\r\n";
                 }
                 else
                 {
@@ -220,16 +251,16 @@ void FtpServer::handleFTP()
                     if (sdPath.back() != '/') sdPath += "/";
                     sdPath += arg;
                     if (RemoveDirectoryA(sdPath.c_str()))
-                        client.println("250 Directory removed");
+                        _responseBuffer += "250 Directory removed\r\n";
                     else
-                        client.println("550 Remove directory failed");
+                        _responseBuffer += "550 Remove directory failed\r\n";
                 }
             }
             else if (strcmp(cmd, "DELE") == 0)
             {
                 if (!arg)
                 {
-                    client.println("550 No file name");
+                    _responseBuffer += "550 No file name\r\n";
                 }
                 else
                 {
@@ -237,16 +268,16 @@ void FtpServer::handleFTP()
                     if (sdPath.back() != '/') sdPath += "/";
                     sdPath += arg;
                     if (DeleteFileA(sdPath.c_str()))
-                        client.println("250 File deleted");
+                        _responseBuffer += "250 File deleted\r\n";
                     else
-                        client.println("550 Delete failed");
+                        _responseBuffer += "550 Delete failed\r\n";
                 }
             }
             else if (strcmp(cmd, "SIZE") == 0)
             {
                 if (!arg)
                 {
-                    client.println("550 No file name");
+                    _responseBuffer += "550 No file name\r\n";
                 }
                 else
                 {
@@ -259,18 +290,18 @@ void FtpServer::handleFTP()
                     {
                         ULONGLONG fileSize = ((ULONGLONG)attr.nFileSizeHigh << 32) | attr.nFileSizeLow;
                         char msg[64];
-                        snprintf(msg, sizeof(msg), "213 %llu", fileSize);
-                        client.println(msg);
+                        snprintf(msg, sizeof(msg), "213 %llu\r\n", fileSize);
+                        _responseBuffer += msg;
                     }
                     else
-                        client.println("550 File not found");
+                        _responseBuffer += "550 File not found\r\n";
                 }
             }
             else if (strcmp(cmd, "MDTM") == 0)
             {
                 if (!arg)
                 {
-                    client.println("550 No file name");
+                    _responseBuffer += "550 No file name\r\n";
                 }
                 else
                 {
@@ -284,13 +315,13 @@ void FtpServer::handleFTP()
                         SYSTEMTIME st;
                         FileTimeToSystemTime(&attr.ftLastWriteTime, &st);
                         char msg[64];
-                        snprintf(msg, sizeof(msg), "213 %04d%02d%02d%02d%02d%02d",
+                        snprintf(msg, sizeof(msg), "213 %04d%02d%02d%02d%02d%02d\r\n",
                                  st.wYear, st.wMonth, st.wDay,
                                  st.wHour, st.wMinute, st.wSecond);
-                        client.println(msg);
+                        _responseBuffer += msg;
                     }
                     else
-                        client.println("550 File not found");
+                        _responseBuffer += "550 File not found\r\n";
                 }
             }
             else if (strcmp(cmd, "PASV") == 0)
@@ -302,26 +333,19 @@ void FtpServer::handleFTP()
                 dataServer.stop();
                 dataServer.begin(FTP_DATA_PORT_PASV);
 
-                // Get the actual port assigned
-                sockaddr_in addr;
-                int addrLen = sizeof(addr);
-                WiFiServer *srv = &dataServer;
-                // We need to get the listening socket from dataServer
-                // Since WiFiServer doesn't expose the socket directly,
-                // we use a known port
                 dataPort = FTP_DATA_PORT_PASV;
 
                 char msg[128];
-                snprintf(msg, sizeof(msg), "227 Entering Passive Mode (127,0,0,1,%d,%d)",
+                snprintf(msg, sizeof(msg), "227 Entering Passive Mode (127,0,0,1,%d,%d)\r\n",
                          dataPort >> 8, dataPort & 0xFF);
-                client.println(msg);
+                _responseBuffer += msg;
                 dataPassiveConn = true;
             }
             else if (strcmp(cmd, "LIST") == 0 || strcmp(cmd, "NLST") == 0)
             {
                 if (!dataPassiveConn)
                 {
-                    client.println("425 Use PASV first");
+                    _responseBuffer += "425 Use PASV first\r\n";
                 }
                 else
                 {
@@ -329,11 +353,14 @@ void FtpServer::handleFTP()
                     data = std::move(dataServer.available());
                     if (!data)
                     {
-                        client.println("425 Cannot open data connection");
+                        _responseBuffer += "425 Cannot open data connection\r\n";
                     }
                     else
                     {
-                        client.println("150 Opening data connection");
+                        _responseBuffer += "150 Opening data connection\r\n";
+                        // 发送响应后再传数据
+                        client.print(_responseBuffer.c_str());
+                        _responseBuffer.clear();
 
                         std::string sdPath = sd_get_base_path();
                         std::string searchPath = sdPath + std::string(cwdName);
@@ -370,7 +397,7 @@ void FtpServer::handleFTP()
 
                         data.stop();
                         dataPassiveConn = false;
-                        client.println("226 Transfer complete");
+                        _responseBuffer += "226 Transfer complete\r\n";
                     }
                 }
             }
@@ -378,14 +405,14 @@ void FtpServer::handleFTP()
             {
                 if (!dataPassiveConn || !arg)
                 {
-                    client.println(dataPassiveConn ? "550 No file name" : "425 Use PASV first");
+                    _responseBuffer += dataPassiveConn ? "550 No file name\r\n" : "425 Use PASV first\r\n";
                 }
                 else
                 {
                     data = std::move(dataServer.available());
                     if (!data)
                     {
-                        client.println("425 Cannot open data connection");
+                        _responseBuffer += "425 Cannot open data connection\r\n";
                     }
                     else
                     {
@@ -396,21 +423,23 @@ void FtpServer::handleFTP()
                         FILE *f = fopen(sdPath.c_str(), "rb");
                         if (!f)
                         {
-                            client.println("550 File not found");
+                            _responseBuffer += "550 File not found\r\n";
                         }
                         else
                         {
-                            client.println("150 Opening data connection");
+                            _responseBuffer += "150 Opening data connection\r\n";
+                            client.print(_responseBuffer.c_str());
+                            _responseBuffer.clear();
 
-                            char buf[4096];
+                            char fileBuf[4096];
                             int n;
-                            while ((n = (int)fread(buf, 1, sizeof(buf), f)) > 0)
-                                data.write((uint8_t *)buf, n);
+                            while ((n = (int)fread(fileBuf, 1, sizeof(fileBuf), f)) > 0)
+                                data.write((uint8_t *)fileBuf, n);
                             fclose(f);
 
                             data.stop();
                             dataPassiveConn = false;
-                            client.println("226 Transfer complete");
+                            _responseBuffer += "226 Transfer complete\r\n";
                         }
                     }
                 }
@@ -419,14 +448,14 @@ void FtpServer::handleFTP()
             {
                 if (!dataPassiveConn || !arg)
                 {
-                    client.println(dataPassiveConn ? "550 No file name" : "425 Use PASV first");
+                    _responseBuffer += dataPassiveConn ? "550 No file name\r\n" : "425 Use PASV first\r\n";
                 }
                 else
                 {
                     data = std::move(dataServer.available());
                     if (!data)
                     {
-                        client.println("425 Cannot open data connection");
+                        _responseBuffer += "425 Cannot open data connection\r\n";
                     }
                     else
                     {
@@ -437,20 +466,22 @@ void FtpServer::handleFTP()
                         FILE *f = fopen(sdPath.c_str(), "wb");
                         if (!f)
                         {
-                            client.println("550 Cannot create file");
+                            _responseBuffer += "550 Cannot create file\r\n";
                         }
                         else
                         {
-                            client.println("150 Opening data connection");
+                            _responseBuffer += "150 Opening data connection\r\n";
+                            client.print(_responseBuffer.c_str());
+                            _responseBuffer.clear();
 
-                            char buf[4096];
+                            char fileBuf[4096];
                             int timeout = 0;
                             while (timeout < 500)
                             {
-                                int n = data.read((uint8_t *)buf, sizeof(buf));
+                                int n = data.read((uint8_t *)fileBuf, sizeof(fileBuf));
                                 if (n > 0)
                                 {
-                                    fwrite(buf, 1, n, f);
+                                    fwrite(fileBuf, 1, n, f);
                                     timeout = 0;
                                 }
                                 else if (n == 0)
@@ -465,7 +496,7 @@ void FtpServer::handleFTP()
 
                             data.stop();
                             dataPassiveConn = false;
-                            client.println("226 Transfer complete");
+                            _responseBuffer += "226 Transfer complete\r\n";
                         }
                     }
                 }
@@ -474,22 +505,20 @@ void FtpServer::handleFTP()
             {
                 if (!arg)
                 {
-                    client.println("550 No file name");
+                    _responseBuffer += "550 No file name\r\n";
                 }
                 else
                 {
                     rnfrCmd = true;
-                    // Store the RNFR path in a temporary buffer
-                    // We use buf for this since it's available
                     strncpy(buf, arg, FTP_BUF_SIZE - 1);
-                    client.println("350 Ready for RNTO");
+                    _responseBuffer += "350 Ready for RNTO\r\n";
                 }
             }
             else if (strcmp(cmd, "RNTO") == 0)
             {
                 if (!rnfrCmd || !arg)
                 {
-                    client.println("503 RNFR required first");
+                    _responseBuffer += "503 RNFR required first\r\n";
                 }
                 else
                 {
@@ -502,28 +531,29 @@ void FtpServer::handleFTP()
                     sdTo += arg;
 
                     if (MoveFileA(sdFrom.c_str(), sdTo.c_str()))
-                        client.println("250 File renamed");
+                        _responseBuffer += "250 File renamed\r\n";
                     else
-                        client.println("550 Rename failed");
+                        _responseBuffer += "550 Rename failed\r\n";
                     rnfrCmd = false;
                 }
             }
             else if (strcmp(cmd, "QUIT") == 0)
             {
-                client.println("221 Goodbye");
+                _responseBuffer += "221 Goodbye\r\n";
+                client.print(_responseBuffer.c_str());
                 client.stop();
                 printf("[FtpServer] Client disconnected\n");
                 return;
             }
             else if (strcmp(cmd, "NOOP") == 0)
             {
-                client.println("200 NOOP ok");
+                _responseBuffer += "200 NOOP ok\r\n";
             }
             else
             {
                 char msg[128];
-                snprintf(msg, sizeof(msg), "502 '%s': command not understood", cmd);
-                client.println(msg);
+                snprintf(msg, sizeof(msg), "502 '%s': command not understood\r\n", cmd);
+                _responseBuffer += msg;
             }
 
             iCL = 0;
@@ -533,5 +563,11 @@ void FtpServer::handleFTP()
         {
             cmdLine[iCL++] = c;
         }
+    }
+
+    // 发送缓冲的响应
+    if (!_responseBuffer.empty())
+    {
+        client.print(_responseBuffer.c_str());
     }
 }
