@@ -165,6 +165,12 @@ static int media_player_init(AppController *sys)
     // 设置CPU主频
     setCpuFrequencyMhz(240);
 
+    // 设置主循环唤醒间隔（20fps ≈ 50ms）
+    APP_OBJ *app = sys->getAppByName(MEDIA_PLAYER_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 50;
+    }
+
     // 创建播放
     video_start(false);
     return 0;

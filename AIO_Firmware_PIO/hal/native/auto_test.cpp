@@ -1130,7 +1130,8 @@ void auto_test_init(int argc, char *argv[])
     if (target) {
         // 别名映射：命令行参数可能不含空格，但 APP 名称可能含空格
         if (strcmp(target, "FileManager") == 0) target = "File Manager";
-        if (strcmp(target, "WebServer") == 0) target = "WebServer";
+        if (strcmp(target, "Server") == 0) target = "WebServer";
+        if (strcmp(target, "LHLXW") == 0) target = "LH&LXW";
         test_state.target_app = target;
         LOG_INFO(AUTO_TEST_TAG, "Auto-test mode enabled, target: %s", target);
     }
@@ -1414,7 +1415,15 @@ bool auto_test_app_settings(void)
 
 // 以下为预留的 APP 测试函数（尚未实现具体测试步骤）
 bool auto_test_app_heartbeat(void)   { LOG_WARN(AUTO_TEST_TAG, "Heartbeat test not implemented"); return false; }
-bool auto_test_app_idea_anim(void)   { LOG_WARN(AUTO_TEST_TAG, "IdeaAnim test not implemented"); return false; }
+bool auto_test_app_idea_anim(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running IdeaAnim app test...");
+    const TestCase *tc = find_test_case("Idea");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_media_player(void)
 {
     LOG_DEBUG(AUTO_TEST_TAG, "Running MediaPlayer app test...");
@@ -1436,9 +1445,33 @@ bool auto_test_app_stockmarket(void)
 }
 bool auto_test_app_weather(void)     { LOG_WARN(AUTO_TEST_TAG, "Weather test not implemented"); return false; }
 bool auto_test_app_tomato(void)      { LOG_WARN(AUTO_TEST_TAG, "Tomato test not implemented"); return false; }
-bool auto_test_app_anniversary(void) { LOG_WARN(AUTO_TEST_TAG, "Anniversary test not implemented"); return false; }
-bool auto_test_app_game_snake(void)  { LOG_WARN(AUTO_TEST_TAG, "GameSnake test not implemented"); return false; }
-bool auto_test_app_bilibili(void)    { LOG_WARN(AUTO_TEST_TAG, "Bilibili test not implemented"); return false; }
+bool auto_test_app_anniversary(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running Anniversary app test...");
+    const TestCase *tc = find_test_case("Anniversary");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
+bool auto_test_app_game_snake(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running GameSnake app test...");
+    const TestCase *tc = find_test_case("Snake");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
+bool auto_test_app_bilibili(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running Bilibili app test...");
+    const TestCase *tc = find_test_case("Bili");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_pc_resource(void) { LOG_WARN(AUTO_TEST_TAG, "PCResource test not implemented"); return false; }
 bool auto_test_app_file_manager(void)
 {
