@@ -20,7 +20,7 @@ WiFiServer dataServer(FTP_DATA_PORT_PASV);
 
 static bool _authenticated = false;
 
-void FtpServer::begin(const String &uname, const String &pword)
+void FtpServer::begin(String uname, String pword)
 {
     _FTP_USER = uname;
     _FTP_PASS = pword;

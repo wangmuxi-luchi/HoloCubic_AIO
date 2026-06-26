@@ -37,7 +37,6 @@ ImuAction *act_info;           // 存放mpu6050返回的数据
 AppController *app_controller; // APP控制器
 
 TimerHandle_t xTimerAction = NULL;
-TaskHandle_t g_app_main_task_handle = NULL;
 void actionCheckHandle(TimerHandle_t xTimer)
 {
     // IMU 动作检测
