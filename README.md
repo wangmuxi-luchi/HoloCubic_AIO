@@ -71,30 +71,6 @@ B站功能操作演示视频链接 https://www.bilibili.com/video/BV1wS4y1R7YF/
 
 ![AIO_TOOL](https://gitee.com/ClimbSnailQ/Project_Image/raw/master/OtherProject/holocubic_aio_tool.png)
 
-### PC 仿真开发环境（无需硬件）
-
-项目提供 Windows 桌面仿真框架，支持在 PC 上编译运行固件、自动测试，无需真实 ESP32 硬件。
-
-详见 → [仿真框架使用教程](AIO_Firmware_PIO/docs/native-sim-tutorial.md)
-
-```bash
-# 编译（在任意终端执行，自动通过 MSYS2 MINGW64 环境编译）
-# 注意：MSYS2 安装路径和 platformio.exe 路径需替换为你自己的目录
-C:\MyPrograms\msys2\msys2_shell.cmd -mingw64 -defterm -no-start -c ^
-  "cd /path/to/HoloCubic_AIO/AIO_Firmware_PIO && /c/Users/<YourUserName>/.platformio/penv/Scripts/platformio.exe run -e AIO_native_sim > build_log.txt 2>&1"
-
-# 运行自动测试
-./.pio/build/AIO_native_sim/program.exe --auto-test="WebServer"
-./.pio/build/AIO_native_sim/program.exe --auto-test="Picture"
-```
-
-特性：
-- **FreeRTOS 真内核**：与真实固件共享同一套 FreeRTOS 调度器
-- **SDL2 显示**：240×240 窗口模拟 TFT 屏幕
-- **键盘交互**：方向键模拟 MPU6050 手势操作
-- **真实网络**：HTTP 8080 + FTP 21，基于 Winsock2
-- **自动测试**：6 个测试用例覆盖 Picture/2048/Settings/WebServer/File Manager/IdeaAnim
-
 ### 开机注意事项
 由于小电视使用的是MPU6050陀螺仪加速度计，通电前3秒需要保持小电视自然放置（不要手拿），等待传感器初始化，初始化完毕后RGB灯会完全亮起，之后就可以正常操作了。插不插内存卡都不影响正常开机，如果6050焊接有问题，初始化后姿态读取会错乱（现象：应用会不断切换）。
 
@@ -281,6 +257,12 @@ AIO框架讲解链接 https://www.bilibili.com/video/BV1jh411a7pV?p=4
 `、`gui-guider`等工具。
 
 platformIO模拟器 https://github.com/lvgl/lv_platformio
+
+### Native 仿真框架（PC 端开发调试）
+
+无需 ESP32 硬件，在 Windows PC 上即可编译运行固件、调试 UI、运行自动测试。
+
+详见 [hal/native/README.md](AIO_Firmware_PIO/hal/native/README.md)
 
 应用图标(128*128)：可以下载阿里矢量图 https://www.iconfont.cn/
 
