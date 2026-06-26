@@ -331,6 +331,18 @@ static const TestStep screen_share_steps[] = {
     {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
 };
 
+// Media Player APP 测试（等待进入 → 验证解码 → 切换视频 → 退出）
+static const TestStep media_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待首帧解码完成
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE},     // 等待几帧
+    {2000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待第二帧解码
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},     // 切换到下一个视频
+    {3000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待新视频首帧解码
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
 // ========================
 // 测试用例注册表
 // ========================
@@ -353,6 +365,7 @@ static const TestCase test_cases[] = {
     {"Snake",         0,  snake_steps,        4, 20},
     {"PC Resource",   0,  pc_resource_steps,   3, 20},
     {"Screen share",  0,  screen_share_steps,  3, 20},
+    {"Media",         0,  media_steps,         8, 20},
 };
 
 static const int test_case_count = sizeof(test_cases) / sizeof(test_cases[0]);
@@ -1402,7 +1415,15 @@ bool auto_test_app_settings(void)
 // 以下为预留的 APP 测试函数（尚未实现具体测试步骤）
 bool auto_test_app_heartbeat(void)   { LOG_WARN(AUTO_TEST_TAG, "Heartbeat test not implemented"); return false; }
 bool auto_test_app_idea_anim(void)   { LOG_WARN(AUTO_TEST_TAG, "IdeaAnim test not implemented"); return false; }
-bool auto_test_app_media_player(void){ LOG_WARN(AUTO_TEST_TAG, "MediaPlayer test not implemented"); return false; }
+bool auto_test_app_media_player(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running MediaPlayer app test...");
+    const TestCase *tc = find_test_case("Media");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_screen_share(void){ LOG_WARN(AUTO_TEST_TAG, "ScreenShare test not implemented"); return false; }
 bool auto_test_app_stockmarket(void)
 {
