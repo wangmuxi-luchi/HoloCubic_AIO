@@ -1,4 +1,5 @@
 #include "SD.h"
+#include "sim_data_path.h"
 #include <cstdio>
 #include <cstring>
 #include <direct.h>
@@ -6,26 +7,12 @@
 
 SDClass SD;
 
-extern "C" {
-    __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void* hModule, char* lpFilename, unsigned long nSize);
-}
-
 static char g_sdBasePath[512] = "";
 
 static void ensureSdBasePath()
 {
     if (g_sdBasePath[0] != '\0') return;
-    char exePath[512];
-    GetModuleFileNameA(NULL, exePath, sizeof(exePath));
-    char *lastSep = strrchr(exePath, '\\');
-    if (lastSep) *lastSep = '\0';
-    lastSep = strrchr(exePath, '\\');
-    if (lastSep) *lastSep = '\0';
-    lastSep = strrchr(exePath, '\\');
-    if (lastSep) *lastSep = '\0';
-    lastSep = strrchr(exePath, '\\');
-    if (lastSep) *lastSep = '\0';
-    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s\\sim_data\\sd", exePath);
+    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s", sim_data_get_sd_path());
     _mkdir(g_sdBasePath);
 }
 

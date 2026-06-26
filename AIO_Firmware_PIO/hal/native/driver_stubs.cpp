@@ -1,5 +1,6 @@
 #include "common.h"
 #include "hal_native.h"
+#include "sim_data_path.h"
 #include <cstdio>
 #include <cstring>
 #include <io.h>
@@ -97,19 +98,7 @@ static void computeSdBasePath()
     static bool computed = false;
     if (computed) return;
     computed = true;
-
-    char exePath[512];
-    GetModuleFileNameA(NULL, exePath, sizeof(exePath));
-    char *lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-
-    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s\\sim_data\\sd", exePath);
+    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s", sim_data_get_sd_path());
 }
 
 static void toNativePath(const char *virtPath, char *nativePath, size_t size)
@@ -217,7 +206,7 @@ boolean SdCard::deleteFile(const String &path)
 
 File SdCard::open(const String &path, const char *mode)
 {
-    return File(path.c_str(), mode);
+    return SD.open(path, mode);
 }
 
 // ==================== Stub for LHLXW emoji (excluded) ====================
@@ -334,8 +323,8 @@ void FlashFS::appendFile(const char *path, const char *message)
 void FlashFS::renameFile(const char *src, const char *dst)
 {
     char srcBuf[512], dstBuf[512];
-    snprintf(srcBuf, sizeof(srcBuf), "sim_data/spiffs%s", src);
-    snprintf(dstBuf, sizeof(dstBuf), "sim_data/spiffs%s", dst);
+    snprintf(srcBuf, sizeof(srcBuf), "%s%s", sim_data_get_spiffs_path(), src);
+    snprintf(dstBuf, sizeof(dstBuf), "%s%s", sim_data_get_spiffs_path(), dst);
     ::rename(srcBuf, dstBuf);
 }
 
