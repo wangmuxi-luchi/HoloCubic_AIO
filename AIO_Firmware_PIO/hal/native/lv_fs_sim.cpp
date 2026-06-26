@@ -1,11 +1,8 @@
 #include "lvgl.h"
+#include "sim_data_path.h"
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
-
-extern "C" {
-    __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void* hModule, char* lpFilename, unsigned long nSize);
-}
 
 static char g_sdBasePath[512] = "";
 
@@ -14,19 +11,7 @@ static void computeSdBasePath()
     static bool computed = false;
     if (computed) return;
     computed = true;
-
-    char exePath[512];
-    GetModuleFileNameA(NULL, exePath, sizeof(exePath));
-    char *lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-    lastSlash = strrchr(exePath, '\\');
-    if (lastSlash) *lastSlash = '\0';
-
-    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s\\sim_data\\sd", exePath);
+    snprintf(g_sdBasePath, sizeof(g_sdBasePath), "%s", sim_data_get_sd_path());
 }
 
 static void toNativePath(const char *lvPath, char *nativePath, size_t size)
