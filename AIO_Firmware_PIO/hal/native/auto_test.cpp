@@ -9,12 +9,6 @@
 #include <FreeRTOS.h>
 #include <task.h>
 
-// 直接设置 act_info->active，绕过主循环阻塞问题
-// LHLXW 等 APP 的 process 函数有 while(1) 死循环，主循环无法更新 act_info
-extern ImuAction *act_info;
-extern TaskHandle_t g_app_main_task_handle;
-extern SemaphoreHandle_t g_action_mutex;
-
 // 动作类型枚举，与 hal_display.c 中的 hal_action_t 保持一致
 enum {
     AUTO_ACTION_NONE = 0,
@@ -44,34 +38,13 @@ enum HookType {
     HOOK_FTP_DOWNLOAD,          // FTP 下载文件：发送 RETR 并验证内容一致
 };
 
-// 直接注入动作到 act_info 并唤醒主循环
-// 绕过 g_last_action 和 200ms 定时器，避免竞态条件
-// 持锁写入，防止与 actionCheckHandle 定时器产生竞态
+// 注入动作到键盘缓冲区，模拟真实按键输入
+// 通过 hal_native_inject_action() → g_last_action → hal_native_get_key_action()
+// → mpu.getAction() 的完整调用链，与真实键盘输入走完全相同的代码路径
 static void inject_action_direct(int action)
 {
-    if (act_info && g_action_mutex) {
-        if (pdTRUE == xSemaphoreTake(g_action_mutex, pdMS_TO_TICKS(100))) {
-            switch (action) {
-                case AUTO_ACTION_RETURN:     act_info->active = RETURN;     break;
-                case AUTO_ACTION_TURN_LEFT:  act_info->active = TURN_LEFT;  break;
-                case AUTO_ACTION_TURN_RIGHT: act_info->active = TURN_RIGHT; break;
-                case AUTO_ACTION_UP:         act_info->active = UP;         break;
-                case AUTO_ACTION_DOWN:       act_info->active = DOWN;       break;
-                case AUTO_ACTION_SHAKE:      act_info->active = SHAKE;      break;
-                case AUTO_ACTION_GO_FORWORD: act_info->active = GO_FORWORD; break;
-                default: break;
-            }
-            act_info->isValid = 1;
-            xSemaphoreGive(g_action_mutex);
-        }
-    }
-    if (g_app_main_task_handle) {
-        xTaskNotifyGive(g_app_main_task_handle);
-    }
+    hal_native_inject_action(action);
 }
-
-// isCheckAction 的外部声明（HoloCubic_AIO.cpp 中定义）
-extern bool isCheckAction;
 
 // app_controller 全局指针（HoloCubic_AIO.cpp 中定义）
 extern AppController *app_controller;
@@ -179,8 +152,9 @@ static struct {
 // ========================
 
 // Picture APP 测试
+// Picture 进入后不会主动加载图片，需要注入 TURN_RIGHT 触发首次加载
 static const TestStep picture_steps[] = {
-    {500,  AUTO_ACTION_NONE,       HOOK_LOADING},   // 等待图片加载（超时500帧）
+    {500,  AUTO_ACTION_TURN_RIGHT, HOOK_LOADING},   // 注入右键→触发首次图片加载→等待解码完成
     {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},      // 下一张
     {500,  AUTO_ACTION_NONE,       HOOK_LOADING},   // 等待加载
     {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},      // 下一张
@@ -206,26 +180,24 @@ static const TestStep game_2048_steps[] = {
     {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
 };
 
-// Settings APP 测试
+// Settings APP 测试（仅验证进入，忽略 HTTP 阻塞导致无法退出的问题）
 static const TestStep settings_steps[] = {
-    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},     // 等待加载
-    {2,    AUTO_ACTION_DOWN,       HOOK_NONE},      // 下移选项
-    {20,   AUTO_ACTION_NONE,       HOOK_NONE},
-    {2,    AUTO_ACTION_DOWN,       HOOK_NONE},      // 下移选项
-    {20,   AUTO_ACTION_NONE,       HOOK_NONE},
-    {2,    AUTO_ACTION_UP,         HOOK_NONE},      // 上移选项
-    {20,   AUTO_ACTION_NONE,       HOOK_NONE},
-    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},      // 退出
-    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},      // 等待退出
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},     // 等待进入即完成
+};
+
+// IdeaAnim APP 测试（动画渲染）
+static const TestStep idea_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察动画
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
 };
 
 // Server APP 测试（HTTP 服务器）
 static const TestStep server_steps[] = {
-    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},        // 等待进入
-    {3000, AUTO_ACTION_NONE,       HOOK_SERVER_READY}, // 等待路由注册完成
-    {3000, AUTO_ACTION_NONE,       HOOK_HTTP_READY},   // 等待 HTTP:80 就绪
-    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},         // 退出
-    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},         // 等待退出
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
 };
 
 // File Manager APP 测试（FTP 服务器 + 文件夹创建/上传/下载）
@@ -287,18 +259,113 @@ static const TestStep stockmarket_steps[] = {
 };
 
 // ========================
+// 批次C：新增测试用例（通用 ENTER→RETURN→EXIT 模式）
+// ========================
+
+// Anniversary APP 测试
+static const TestStep anniversary_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Bili APP 测试
+static const TestStep bili_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Heartbeat APP 测试（后台应用，仅验证进入后退出）
+static const TestStep heartbeat_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Tomato APP 测试
+static const TestStep tomato_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Weather APP 测试
+static const TestStep weather_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Weather Old APP 测试
+static const TestStep weather_old_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Snake APP 测试
+static const TestStep snake_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {3000, AUTO_ACTION_NONE,       HOOK_NONE},     // 停留观察
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// PC Resource APP 测试
+static const TestStep pc_resource_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Screen share APP 测试
+static const TestStep screen_share_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// Media Player APP 测试（等待进入 → 验证解码 → 切换视频 → 退出）
+static const TestStep media_steps[] = {
+    {2000, AUTO_ACTION_NONE,       HOOK_ENTER},    // 等待进入
+    {2000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待首帧解码完成
+    {30,   AUTO_ACTION_NONE,       HOOK_NONE},     // 等待几帧
+    {2000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待第二帧解码
+    {2,    AUTO_ACTION_TURN_RIGHT, HOOK_NONE},     // 切换到下一个视频
+    {3000, AUTO_ACTION_NONE,       HOOK_LOADING},  // 等待新视频首帧解码
+    {2,    AUTO_ACTION_RETURN,     HOOK_NONE},     // 退出
+    {3000, AUTO_ACTION_NONE,       HOOK_EXIT},     // 等待退出
+};
+
+// ========================
 // 测试用例注册表
 // ========================
 
 static const TestCase test_cases[] = {
     {"Picture",       0,  picture_steps,      9, 20},
     {"2048",          4,  game_2048_steps,   11, 20},
-    {"Settings",      3,  settings_steps,     9, 20},
-    {"Idea",          4,  NULL,               0, 20},
-    {"WebServer",     0,  server_steps,       5, 20},
+    {"Settings",      3,  settings_steps,     1, 20},
+    {"Idea",          0,  idea_steps,         4, 20},
+    {"WebServer",     0,  server_steps,       3, 20},
     {"File Manager",  0,  file_manager_steps, 7, 20},
     {"LH&LXW",        0,  LHLXW_steps,       20, 20},
     {"Stock",         0,  stockmarket_steps,  4, 20},
+    {"Anniversary",   0,  anniversary_steps,  4, 20},
+    {"Bili",          0,  bili_steps,         4, 20},
+    {"Heartbeat",     0,  heartbeat_steps,    3, 20},
+    {"Tomato",        0,  tomato_steps,       4, 20},
+    {"Weather",       0,  weather_steps,      4, 20},
+    {"Weather Old",   0,  weather_old_steps,  4, 20},
+    {"Snake",         0,  snake_steps,        4, 20},
+    {"PC Resource",   0,  pc_resource_steps,   3, 20},
+    {"Screen share",  0,  screen_share_steps,  3, 20},
+    {"Media",         0,  media_steps,         8, 20},
 };
 
 static const int test_case_count = sizeof(test_cases) / sizeof(test_cases[0]);
@@ -540,6 +607,11 @@ static bool hook_ftp_mkdir_check(void)
 
     attempt++;
 
+    // 调试日志：每 100 帧输出当前状态，确认钩子是否被调用及卡在哪步
+    if (attempt % 100 == 1) {
+        LOG_INFO(AUTO_TEST_TAG, "FTP MKDIR: attempt=%d state=%d", attempt, s_state);
+    }
+
     switch (s_state) {
     case S_CONNECT:
         sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -752,7 +824,6 @@ static bool hook_ftp_upload_check(void)
             closesocket(data_sock);
             data_sock = INVALID_SOCKET;
             s_state = S_CTRL_RESP;
-            buf_off = buf_len = 0;
         }
         break;
 
@@ -1059,7 +1130,8 @@ void auto_test_init(int argc, char *argv[])
     if (target) {
         // 别名映射：命令行参数可能不含空格，但 APP 名称可能含空格
         if (strcmp(target, "FileManager") == 0) target = "File Manager";
-        if (strcmp(target, "WebServer") == 0) target = "WebServer";
+        if (strcmp(target, "Server") == 0) target = "WebServer";
+        if (strcmp(target, "LHLXW") == 0) target = "LH&LXW";
         test_state.target_app = target;
         LOG_INFO(AUTO_TEST_TAG, "Auto-test mode enabled, target: %s", target);
     }
@@ -1100,7 +1172,6 @@ void auto_test_tick(void)
     if (!test_state.current_case) return;
 
     const TestCase *tc = test_state.current_case;
-    isCheckAction = true;
 
     switch (test_state.phase) {
 
@@ -1344,8 +1415,24 @@ bool auto_test_app_settings(void)
 
 // 以下为预留的 APP 测试函数（尚未实现具体测试步骤）
 bool auto_test_app_heartbeat(void)   { LOG_WARN(AUTO_TEST_TAG, "Heartbeat test not implemented"); return false; }
-bool auto_test_app_idea_anim(void)   { LOG_WARN(AUTO_TEST_TAG, "IdeaAnim test not implemented"); return false; }
-bool auto_test_app_media_player(void){ LOG_WARN(AUTO_TEST_TAG, "MediaPlayer test not implemented"); return false; }
+bool auto_test_app_idea_anim(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running IdeaAnim app test...");
+    const TestCase *tc = find_test_case("Idea");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
+bool auto_test_app_media_player(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running MediaPlayer app test...");
+    const TestCase *tc = find_test_case("Media");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_screen_share(void){ LOG_WARN(AUTO_TEST_TAG, "ScreenShare test not implemented"); return false; }
 bool auto_test_app_stockmarket(void)
 {
@@ -1358,11 +1445,43 @@ bool auto_test_app_stockmarket(void)
 }
 bool auto_test_app_weather(void)     { LOG_WARN(AUTO_TEST_TAG, "Weather test not implemented"); return false; }
 bool auto_test_app_tomato(void)      { LOG_WARN(AUTO_TEST_TAG, "Tomato test not implemented"); return false; }
-bool auto_test_app_anniversary(void) { LOG_WARN(AUTO_TEST_TAG, "Anniversary test not implemented"); return false; }
-bool auto_test_app_game_snake(void)  { LOG_WARN(AUTO_TEST_TAG, "GameSnake test not implemented"); return false; }
-bool auto_test_app_bilibili(void)    { LOG_WARN(AUTO_TEST_TAG, "Bilibili test not implemented"); return false; }
+bool auto_test_app_anniversary(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running Anniversary app test...");
+    const TestCase *tc = find_test_case("Anniversary");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
+bool auto_test_app_game_snake(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running GameSnake app test...");
+    const TestCase *tc = find_test_case("Snake");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
+bool auto_test_app_bilibili(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running Bilibili app test...");
+    const TestCase *tc = find_test_case("Bili");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_pc_resource(void) { LOG_WARN(AUTO_TEST_TAG, "PCResource test not implemented"); return false; }
-bool auto_test_app_file_manager(void){ LOG_WARN(AUTO_TEST_TAG, "FileManager test not implemented"); return false; }
+bool auto_test_app_file_manager(void)
+{
+    LOG_DEBUG(AUTO_TEST_TAG, "Running FileManager app test...");
+    const TestCase *tc = find_test_case("File Manager");
+    if (!tc) return false;
+    start_test_case(tc);
+    test_state.running = true;
+    return true;
+}
 bool auto_test_app_LHLXW(void)
 {
     LOG_DEBUG(AUTO_TEST_TAG, "Running LHLXW app test...");

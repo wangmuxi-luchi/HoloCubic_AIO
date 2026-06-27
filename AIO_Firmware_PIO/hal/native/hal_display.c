@@ -198,6 +198,7 @@ void hal_native_inject_action(int action)
     EnterCriticalSection(&g_action_lock);
     g_last_action = (hal_action_t)action;
     LeaveCriticalSection(&g_action_lock);
+    isCheckAction = true;
 }
 
 // 自动测试钩子（弱函数，默认空实现）

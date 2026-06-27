@@ -31,6 +31,11 @@ static void ensureWSA()
     }
 }
 
+void network_bridge_init()
+{
+    ensureWSA();
+}
+
 static void setSocketTimeout(int sock, int timeout_ms)
 {
     DWORD t = (DWORD)timeout_ms;
@@ -107,6 +112,22 @@ WiFiClient &WiFiClient::operator=(const WiFiClient &other)
         {
             _sock = other._sock;
         }
+    }
+    return *this;
+}
+
+WiFiClient::WiFiClient(WiFiClient &&other) : _sock(other._sock)
+{
+    other._sock = -1;
+}
+
+WiFiClient &WiFiClient::operator=(WiFiClient &&other)
+{
+    if (this != &other)
+    {
+        _close();
+        _sock = other._sock;
+        other._sock = -1;
     }
     return *this;
 }
@@ -389,6 +410,19 @@ WiFiClient WiFiServer::available()
 
     setNonBlocking(clientSock, true);
     return WiFiClient(clientSock);
+}
+
+bool WiFiServer::hasClient()
+{
+    if (_sock < 0) return false;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(_sock, &fds);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 0;
+    int ret = select((int)_sock + 1, &fds, NULL, NULL, &tv);
+    return ret > 0 && FD_ISSET(_sock, &fds);
 }
 
 uint8_t WiFiServer::status()
