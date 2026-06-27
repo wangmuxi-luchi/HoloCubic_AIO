@@ -156,6 +156,7 @@ static void read_config(HeartbeatAppForeverData *cfg)
 void HeartbeatAppForeverData::mqtt_reconnect()
 {
     Serial.print("Attempting MQTT connection...\n");
+    printf("[DEBUG] mqtt_reconnect: mqtt_client=%p\n", (void*)mqtt_client); fflush(stdout);
     if (NULL == mqtt_client)
     {
         Serial.print("MQTT Client Error!\n");
@@ -173,6 +174,7 @@ void HeartbeatAppForeverData::mqtt_reconnect()
     {
         Serial.printf("failed, rc=%d\n", mqtt_client->state());
     }
+    Serial.println("[DEBUG] mqtt_reconnect() done");
 }
 
 // 动态数据，APP的生命周期结束也需要释放它
@@ -188,6 +190,10 @@ struct HeartbeatAppRunData
 
 // 保存APP运行时的参数信息，理论上关闭APP时推荐在 xxx_exit_callback 中释放掉
 static HeartbeatAppRunData *run_data = NULL;
+static bool heartbeat_ui_initialized = false;
+static uint8_t last_send_cnt = 0xFF;
+static uint8_t last_recv_cnt = 0xFF;
+static unsigned long last_heartbeat_anim_ms = 0;
 
 // 当然你也可以添加恒定在内存中的少量变量（退出时不用释放，实现第二次启动时可以读取）
 
@@ -229,6 +235,16 @@ static int heartbeat_init(AppController *sys)
 
     // 连接wifi，并开启mqtt客户端
     sys->send_to(HEARTBEAT_APP_NAME, CTRL_NAME, APP_MESSAGE_WIFI_CONN, NULL, NULL);
+    APP_OBJ *app = sys->getAppByName(HEARTBEAT_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 50;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
+    heartbeat_ui_initialized = false;
+    last_send_cnt = 0xFF;
+    last_recv_cnt = 0xFF;
+    last_heartbeat_anim_ms = 0;
     return 0;
 }
 
@@ -302,10 +318,21 @@ static void heartbeat_process(AppController *sys,
     }
 
     // 程序需要时可以适当加延时
-    display_heartbeat("heartbeat", anim_type);
-    heartbeat_set_send_recv_cnt_label(run_data->send_cnt, run_data->recv_cnt);
-    display_heartbeat_img();
-    delay(30);
+    if (!heartbeat_ui_initialized || anim_type != LV_SCR_LOAD_ANIM_NONE) {
+        display_heartbeat("heartbeat", anim_type);
+        heartbeat_ui_initialized = true;
+    }
+    if (!heartbeat_ui_initialized || run_data->send_cnt != last_send_cnt || run_data->recv_cnt != last_recv_cnt) {
+        heartbeat_set_send_recv_cnt_label(run_data->send_cnt, run_data->recv_cnt);
+        last_send_cnt = run_data->send_cnt;
+        last_recv_cnt = run_data->recv_cnt;
+    }
+    // 动画帧率守护：按固定帧率刷新图片动画，避免每帧调用 lv_img_set_src 触发 LVGL 自激振荡
+    if (GET_SYS_MILLIS() - last_heartbeat_anim_ms >= 50) {
+        last_heartbeat_anim_ms = GET_SYS_MILLIS();
+        display_heartbeat_img();
+    }
+    // delay(30);  // 由 loop_interval_ms 替代
 }
 
 static void heartbeat_background_task(AppController *sys,
@@ -475,4 +502,4 @@ static void heartbeat_message_handle(const char *from, const char *to,
 
 APP_OBJ heartbeat_app = {HEARTBEAT_APP_NAME, &app_heartbeat, "Author WoodwindHu\nVersion 2.0.0\n",
                          heartbeat_init, heartbeat_process, heartbeat_background_task,
-                         heartbeat_exit_callback, heartbeat_message_handle};
+                         heartbeat_exit_callback, heartbeat_message_handle, 30};

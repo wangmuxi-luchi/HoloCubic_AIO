@@ -3,6 +3,7 @@
 #include "settings_gui.h"
 #include "sys/app_controller.h"
 #include "common.h"
+#include "network_async.h"
 
 #define NEW_VERSION "http://climbsnail.cn:5001/holocubicAIO/sn/v1/version/firmware"
 #define SETTINGS_APP_NAME "Settings"
@@ -15,6 +16,9 @@ struct SettingsAppRunData
 };
 
 static SettingsAppRunData *run_data = NULL;
+
+static HttpRequest *g_version_req = NULL;
+static bool g_version_displayed = false;
 
 int exec_order(int len, const uint8_t *data)
 {
@@ -160,8 +164,10 @@ static int settings_init(AppController *sys)
     run_data = (SettingsAppRunData *)calloc(1, sizeof(SettingsAppRunData));
     run_data->recv_buf = (uint8_t *)malloc(RECV_BUF_LEN);
     run_data->recv_len = 0;
-    sys->send_to(SETTINGS_APP_NAME, CTRL_NAME,
-                 APP_MESSAGE_WIFI_CONN, NULL, NULL);
+    if (g_version_req == NULL && !g_version_displayed)
+    {
+        g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
+    }
     return 0;
 }
 
@@ -170,15 +176,34 @@ static void settings_process(AppController *sys,
 {
     if (RETURN == act_info->active)
     {
-        sys->app_exit(); // 退出APP
+        sys->app_exit();
+        return;
+    }
+
+    if (!g_version_displayed && g_version_req)
+    {
+        if (g_version_req->done)
+        {
+            __sync_synchronize();
+            char ver[16] = "v UNKNOWN";
+            if (g_version_req->http_code > 0)
+            {
+                snprintf(ver, sizeof(ver), "%s", g_version_req->response + 13);
+            }
+            display_settings(AIO_VERSION, ver, LV_SCR_LOAD_ANIM_NONE);
+            vPortFree(g_version_req);
+            g_version_req = NULL;
+            g_version_displayed = true;
+        }
         return;
     }
 
     if (GO_FORWORD == act_info->active)
     {
-        sys->send_to(SETTINGS_APP_NAME, CTRL_NAME,
-                     APP_MESSAGE_WIFI_CONN, NULL, NULL);
-        delay(500);
+        if (g_version_req == NULL && !g_version_displayed)
+        {
+            g_version_req = http_get_async(NEW_VERSION, xTaskGetCurrentTaskHandle());
+        }
     }
 
     if (Serial.available())
@@ -194,11 +219,6 @@ static void settings_process(AppController *sys,
             Serial.write(run_data->recv_buf, len);
             analysis_uart_data(run_data->recv_len, run_data->recv_buf);
         }
-        delay(50);
-    }
-    else
-    {
-        delay(200);
     }
 
     // 发送请求，当请求完成后自动会调用 settings_event_notification 函数
@@ -234,6 +254,13 @@ static int settings_exit_callback(void *param)
 {
     settings_gui_del();
 
+    if (g_version_req)
+    {
+        g_version_req->orphaned = true;
+        g_version_req = NULL;
+    }
+    g_version_displayed = false;
+
     // 释放运行数据
     if (NULL != run_data)
     {
@@ -250,14 +277,6 @@ static void settings_message_handle(const char *from, const char *to,
     // 目前事件主要是wifi开关类事件（用于功耗控制）
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        // todo
-        char ver[16];
-        get_new_version(ver);
-        display_settings(AIO_VERSION, ver, LV_SCR_LOAD_ANIM_NONE);
-    }
-    break;
     case APP_MESSAGE_WIFI_AP:
     {
         // todo

@@ -2,6 +2,7 @@
 #include "bilibili_gui.h"
 #include "sys/app_controller.h"
 #include "../../common.h"
+#include "network_async.h"
 
 #define FANS_API "https://api.bilibili.com/x/relation/stat?vmid="
 #define OTHER_API "https://api.bilibili.com/x/space/upstat?mid="
@@ -66,21 +67,34 @@ struct MyHttpResult
 
 static B_Config cfg_data;
 static BilibiliAppRunData *run_data = NULL;
+static HttpRequest *g_bili_req = NULL;
+static bool bilibili_ui_initialized = false;
 
-static MyHttpResult http_request(String uid = "344470052")
+static MyHttpResult http_request(String uid = "1666257451")
 {
-    // String url = "http://www.dtmb.top/api/fans/index?id=" + uid;
     MyHttpResult result;
+    Serial.printf("[BILI_HTTP] http_request() start, uid=%s\n", uid.c_str());
+    Serial.flush();
     String url = FANS_API + uid;
+    Serial.printf("[BILI_HTTP] url=%s\n", url.c_str());
+    Serial.flush();
     HTTPClient httpClient;
     httpClient.setTimeout(1000);
+    Serial.printf("[BILI_HTTP] calling begin()...\n");
+    Serial.flush();
     bool status = httpClient.begin(url);
+    Serial.printf("[BILI_HTTP] begin() returned %d\n", (int)status);
+    Serial.flush();
     if (status == false)
     {
         result.httpCode = -1;
         return result;
     }
+    Serial.printf("[BILI_HTTP] calling GET()...\n");
+    Serial.flush();
     int httpCode = httpClient.GET();
+    Serial.printf("[BILI_HTTP] GET() returned %d\n", httpCode);
+    Serial.flush();
     String httpResponse = httpClient.getString();
     httpClient.end();
     result.httpCode = httpCode;
@@ -99,17 +113,48 @@ static int bilibili_init(AppController *sys)
     run_data->follow_num = 0;
     run_data->refresh_status = 0;
     run_data->refresh_time_millis = GET_SYS_MILLIS() - cfg_data.updataInterval;
+    bilibili_ui_initialized = false;
+    APP_OBJ *app = sys->getAppByName(BILI_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = cfg_data.updataInterval;
+    }
     return 0;
 }
 
 static void bilibili_process(AppController *sys,
                              const ImuAction *act_info)
 {
+    Serial.println(F("\n Bilibili process"));
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_NONE;
     if (RETURN == act_info->active)
     {
         sys->app_exit(); // 退出APP
         return;
+    }
+
+    if (g_bili_req && g_bili_req->done)
+    {
+        __sync_synchronize();
+        String payload = String(g_bili_req->response);
+        if (g_bili_req->http_code > 0 && payload.length() > 0)
+        {
+            Serial.println("[HTTP] OK");
+            Serial.println(payload);
+            int startIndex_1 = payload.indexOf("follower") + 10;
+            int endIndex_1 = payload.indexOf('}', startIndex_1);
+            int startIndex_2 = payload.indexOf("following") + 11;
+            int endIndex_2 = payload.indexOf(',', startIndex_2);
+            run_data->fans_num = payload.substring(startIndex_1, endIndex_1).toInt();
+            run_data->follow_num = payload.substring(startIndex_2, endIndex_2).toInt();
+            run_data->refresh_status = 1;
+        }
+        else
+        {
+            Serial.println("[HTTP] ERROR");
+        }
+        vPortFree(g_bili_req);
+        g_bili_req = NULL;
+        // 不 return，继续执行到 display_bilibili() 刷新 UI
     }
 
     char fans_num[20] = {0};
@@ -139,14 +184,21 @@ static void bilibili_process(AppController *sys,
         // 以下减少网络请求的压力
         if (doDelayMillisTime(cfg_data.updataInterval, &run_data->refresh_time_millis, false))
         {
-            sys->send_to(BILI_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, NULL, NULL);
+            if (g_bili_req == NULL)
+            {
+                String url = FANS_API + cfg_data.bili_uid;
+                g_bili_req = http_get_async(url.c_str(), xTaskGetCurrentTaskHandle());
+            }
         }
     }
 
-    display_bilibili("bilibili", anim_type, fans_num, follow_num);
+    if (run_data->refresh_status == 1 || !bilibili_ui_initialized) {
+        display_bilibili("bilibili", anim_type, fans_num, follow_num);
+        run_data->refresh_status = 0;
+        bilibili_ui_initialized = true;
+    }
 
-    delay(300);
+    // delay(300);  // 由 loop_interval_ms 替代
 }
 
 static void bilibili_background_task(AppController *sys,
@@ -160,6 +212,12 @@ static int bilibili_exit_callback(void *param)
 {
     bilibili_gui_del();
 
+    if (g_bili_req)
+    {
+        g_bili_req->orphaned = true;
+        g_bili_req = NULL;
+    }
+
     // 释放运行数据
     if (NULL != run_data)
     {
@@ -171,7 +229,11 @@ static int bilibili_exit_callback(void *param)
 
 static void update_fans_num()
 {
+    Serial.printf("[BILI] update_fans_num() start, uid=%s\n", cfg_data.bili_uid.c_str());
+    Serial.flush();
     MyHttpResult result = http_request(cfg_data.bili_uid);
+    Serial.printf("[BILI] http_request returned, httpCode=%d\n", result.httpCode);
+    Serial.flush();
     if (-1 == result.httpCode)
     {
         Serial.println("[HTTP] Http request failed.");
@@ -206,16 +268,6 @@ static void bilibili_message_handle(const char *from, const char *to,
 {
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        Serial.print(GET_SYS_MILLIS());
-        Serial.println("[SYS] bilibili_event_notification");
-        if (0 == run_data->refresh_status)
-        {
-            update_fans_num();
-        }
-    }
-    break;
     case APP_MESSAGE_GET_PARAM:
     {
         char *param_key = (char *)message;
@@ -264,4 +316,4 @@ static void bilibili_message_handle(const char *from, const char *to,
 
 APP_OBJ bilibili_app = {BILI_APP_NAME, &app_bilibili, "", bilibili_init,
                         bilibili_process, bilibili_background_task,
-                        bilibili_exit_callback, bilibili_message_handle};
+                        bilibili_exit_callback, bilibili_message_handle, 300};

@@ -2,3 +2,7 @@
 .DS_Store
 .vscode/
 ..VSCodeCounter/
+build_log*.txt
+diff_output.txt
+run_log_err.txt
+test_logs/

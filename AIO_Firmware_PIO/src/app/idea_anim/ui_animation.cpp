@@ -602,6 +602,11 @@ void create_ui(void *phy_fb, int screen_width, int screen_height, int color_byte
 
 void ui_update(int choose)
 {
+    static int last_choose = -1;
+    if (choose != last_choose) {
+        printf("[IDEA] ui_update choose=%d\n", choose);
+        last_choose = choose;
+    }
     switch (choose)
     {
     case 0:

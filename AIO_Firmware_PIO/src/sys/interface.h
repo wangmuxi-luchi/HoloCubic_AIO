@@ -57,6 +57,20 @@ struct APP_OBJ
     void (*message_handle)(const char *from, const char *to,
                            APP_MESSAGE_TYPE type, void *message,
                            void *ext_info);
+
+    // 主循环期望间隔（毫秒）
+    //   0 (默认): 永久阻塞（等 IMU 动作 / 网络响应 / WiFi 超时通知唤醒）
+    //   1~999: 按设定值定时唤醒
+    // 需要多帧初始化的 APP：app_init() 中设为 >0，初始化完成后设回 0
+    int loop_interval_ms;
+
+    // 固定帧率模式：true → get_loop_interval_ms() 自动计算剩余阻塞时间
+    //   false（默认）→ 直接使用 loop_interval_ms 原值
+    bool fixed_fps_mode;
+
+    // 下一帧预期时间戳（固定帧率模式用）
+    //   帧到期时推进 last_frame_ms += loop_interval_ms，按键唤醒不重置
+    unsigned long last_frame_ms;
 };
 
 #endif

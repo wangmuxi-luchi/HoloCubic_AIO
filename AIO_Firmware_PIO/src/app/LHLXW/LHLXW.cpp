@@ -6,6 +6,10 @@
 #include "sys/app_controller.h"
 #include "LHLXW_GUI.h"
 
+#ifdef NATIVE_SIMULATION
+#include "hal_native.h"
+#endif
+
 
 #define APP_NAME   "LH&LXW"//APP名字
 extern const lv_img_dsc_t LHLXW_ICO;//APP图标
@@ -37,16 +41,24 @@ extern LHLXW_RUN *lhlxw_run;
 
 
 static int LHLXW_init(AppController *sys){
+    printf("[LHLXW] init start\n"); fflush(stdout);
     lhlxw_run = (LHLXW_RUN*)malloc(sizeof(LHLXW_RUN));
     lhlxw_run->option_num = 0;//确保每次进入app，当先选项序号都为0
+    #ifdef NATIVE_SIMULATION
+    hal_lhlxw_option_num = 0;
+    hal_lhlxw_subapp_running = false;
+    #endif
     setCpuFrequencyMhz(240);
+    printf("[LHLXW] calling GUI_Init...\n"); fflush(stdout);
     LHLXW_GUI_Init();
+    printf("[LHLXW] init done\n"); fflush(stdout);
     return 0;
 }
 
 
 
 static void LHLXW_process(AppController *sys,const ImuAction *action){
+    printf("[LHLXW] process loop start\n"); fflush(stdout);
     while(1){
         lv_timer_handler();
 
@@ -58,12 +70,22 @@ static void LHLXW_process(AppController *sys,const ImuAction *action){
 
         /* MPU6050动作响应 */
         if (RETURN == act_info->active){
+            printf("[LHLXW] RETURN detected, calling GUI_DeInit...\n"); fflush(stdout);
             LHLXW_GUI_DeInit();
+            printf("[LHLXW] GUI_DeInit done, calling app_exit...\n"); fflush(stdout);
             sys->app_exit();
+            #ifdef NATIVE_SIMULATION
+            hal_lhlxw_option_num = -1;
+            hal_lhlxw_subapp_running = false;
+            #endif
+            printf("[LHLXW] process exit\n"); fflush(stdout);
             return;//退出此功能
         }else if(TURN_RIGHT == act_info->active){
             lhlxw_run->option_num++;
             if(lhlxw_run->option_num==5)lhlxw_run->option_num = 0;
+            #ifdef NATIVE_SIMULATION
+            hal_lhlxw_option_num = lhlxw_run->option_num;
+            #endif
             SWITCH_OPTION(true,lhlxw_run->option_num);
             for(uint16_t i=0;i<400;i++){
                 lv_task_handler();
@@ -72,12 +94,18 @@ static void LHLXW_process(AppController *sys,const ImuAction *action){
         }else if(TURN_LEFT == act_info->active){
             lhlxw_run->option_num--;
             if(lhlxw_run->option_num>5)lhlxw_run->option_num = 4;
+            #ifdef NATIVE_SIMULATION
+            hal_lhlxw_option_num = lhlxw_run->option_num;
+            #endif
             SWITCH_OPTION(false,lhlxw_run->option_num);
             for(uint16_t i=0;i<400;i++){
                 lv_task_handler();
                 delay(1);
             }
         }else if(act_info->active == UP){
+            #ifdef NATIVE_SIMULATION
+            hal_lhlxw_subapp_running = true;
+            #endif
             if(lhlxw_run->option_num == 4)
                 emoji_process(lhlxw_run->LV_LHLXW_GUI_OBJ);
             else if(lhlxw_run->option_num == 3)
@@ -88,6 +116,9 @@ static void LHLXW_process(AppController *sys,const ImuAction *action){
                 heartbeat_process(lhlxw_run->LV_LHLXW_GUI_OBJ);
             else 
                 cyber_pros(lhlxw_run->LV_LHLXW_GUI_OBJ);
+            #ifdef NATIVE_SIMULATION
+            hal_lhlxw_subapp_running = false;
+            #endif
         } 
         act_info->active = ACTIVE_TYPE::UNKNOWN;
         act_info->isValid = 0;
@@ -104,7 +135,9 @@ static void LHLXW_background_task(AppController *sys,
 
 static int LHLXW_exit_callback(void *param)
 {
+    printf("[LHLXW] exit_callback, freeing lhlxw_run\n"); fflush(stdout);
     free(lhlxw_run);
+    printf("[LHLXW] exit_callback done\n"); fflush(stdout);
     return 0;
 }
 

@@ -4,6 +4,7 @@
 #include "sys/app_controller.h"
 #include "network.h"
 #include "common.h"
+#include "network_async.h"
 
 #define TIME_API "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/"
 #define ZHIXIN_WEATHER_API "https://api.seniverse.com/v3/weather/now.json?key=%s&location=%s&language=%s&unit=c"
@@ -88,6 +89,14 @@ struct WeatherAppRunData
 
 static WT_Config cfg_data;
 static WeatherAppRunData *run_data = NULL;
+
+enum WeatherOldReqType { REQ_NONE = 0, REQ_WEATHER, REQ_TIME };
+static HttpRequest *g_weather_old_req = NULL;
+static WeatherOldReqType g_weather_old_req_type = REQ_NONE;
+
+static bool weather_old_ui_initialized = false;
+static int last_old_clock_page = -1;
+static unsigned long last_time_update_ms = 0;
 
 static Weather getWeather(void)
 {
@@ -211,6 +220,15 @@ static int weather_init(AppController *sys)
     run_data->coactusUpdateFlag = 0x01;
 
     run_data->weather = {0, 0};
+    APP_OBJ *app = sys->getAppByName(WEATHER_OLD_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 1000;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
+    weather_old_ui_initialized = false;
+    last_old_clock_page = -1;
+    last_time_update_ms = 0;
     return 0;
 }
 
@@ -221,6 +239,49 @@ static void weather_process(AppController *sys,
     if (RETURN == act_info->active)
     {
         sys->app_exit();
+        return;
+    }
+
+    if (g_weather_old_req && g_weather_old_req->done)
+    {
+        Serial.printf("[WEATHER_OLD]   g_weather_old_req->done\n");
+        Serial.flush();
+        __sync_synchronize();
+        String payload = String(g_weather_old_req->response);
+        if (g_weather_old_req->http_code > 0 && payload.length() > 0)
+        {
+            if (REQ_WEATHER == g_weather_old_req_type)
+            {
+                Serial.println(payload);
+                int code_index = (payload.indexOf("code")) + 7;
+                int temp_index = (payload.indexOf("temperature")) + 14;
+                run_data->weather.weather_code =
+                    atol(payload.substring(code_index, temp_index - 17).c_str());
+                run_data->weather.temperature =
+                    atol(payload.substring(temp_index, payload.length() - 47).c_str());
+                UpdateWeather(&run_data->weather, LV_SCR_LOAD_ANIM_NONE);
+            }
+            else if (REQ_TIME == g_weather_old_req_type)
+            {
+                Serial.println(payload);
+                int time_index = (payload.indexOf("data")) + 12;
+                String time = payload.substring(time_index, payload.length() - 3);
+                run_data->m_preNetTimestamp = atoll(time.c_str()) + run_data->m_errorNetTimestamp;
+                run_data->m_preLocalTimestamp = GET_SYS_MILLIS();
+                long long timestamp = run_data->m_preNetTimestamp + TIMEZERO_OFFSIZE;
+                run_data->g_rtc.setTime(timestamp / 1000);
+                String date = run_data->g_rtc.getDate(String("%Y-%m-%d"));
+                String time_str = run_data->g_rtc.getTime(String("%H:%M:%S"));
+                display_time_old(date.c_str(), time_str.c_str(), LV_SCR_LOAD_ANIM_NONE);
+            }
+        }
+        else
+        {
+            Serial.printf("[HTTP] ERROR\n");
+        }
+        vPortFree(g_weather_old_req);
+        g_weather_old_req = NULL;
+        g_weather_old_req_type = REQ_NONE;
         return;
     }
 
@@ -244,13 +305,25 @@ static void weather_process(AppController *sys,
 
     if (0 == run_data->clock_page) // 更新天气
     {
-        Weather weather = getWeather();
-        UpdateWeather(&weather, anim_type);
+        // 页面切换守护：仅在首次渲染、切换到此页面或强制更新时刷新天气UI
+        if (!weather_old_ui_initialized || last_old_clock_page != 0 || run_data->coactusUpdateFlag == 0x01) {
+            Weather weather = getWeather();
+            UpdateWeather(&weather, anim_type);
+            weather_old_ui_initialized = true;
+        }
         // 以下减少网络请求的压力
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.weatherUpdataInterval, &run_data->preWeatherMillis, false))
         {
-            sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
+            if (g_weather_old_req == NULL)
+            {
+                char api[128] = "";
+                snprintf(api, 128, ZHIXIN_WEATHER_API, cfg_data.weather_key.c_str(),
+                         cfg_data.cityname.c_str(), cfg_data.language.c_str());
+                g_weather_old_req = http_get_async(api, xTaskGetCurrentTaskHandle());
+                Serial.printf("[WEATHER_OLD]  req2 created\n");
+                Serial.flush();
+                g_weather_old_req_type = REQ_WEATHER;
+            }
             run_data->coactusUpdateFlag = 0x00;
         }
     }
@@ -258,24 +331,35 @@ static void weather_process(AppController *sys,
     // 界面刷新
     if (1 == run_data->clock_page) // 更新时钟
     {
-        // 使用本地的机器时钟
-        long long timestamp = getTimestamp() + TIMEZERO_OFFSIZE; // nowapi时间API
-        UpdateTime_RTC(timestamp, anim_type);
+        // 时间间隔守护：按固定帧率刷新时间显示，避免每帧调用 lv_label_set_text_fmt 触发 LVGL 自激振荡
+        if (GET_SYS_MILLIS() - last_time_update_ms >= 1000) {
+            last_time_update_ms = GET_SYS_MILLIS();
+            long long timestamp = getTimestamp() + TIMEZERO_OFFSIZE; // nowapi时间API
+            UpdateTime_RTC(timestamp, anim_type);
+        }
         // 以下减少网络请求的压力
         if (0x01 == run_data->coactusUpdateFlag || doDelayMillisTime(cfg_data.timeUpdataInterval, &run_data->preTimeMillis, false))
         {
             // 尝试同步网络上的时钟
-            sys->send_to(WEATHER_OLD_APP_NAME, CTRL_NAME,
-                         APP_MESSAGE_WIFI_CONN, (void *)run_data->clock_page, NULL);
+            if (g_weather_old_req == NULL)
+            {
+                g_weather_old_req = http_get_async(TIME_API, xTaskGetCurrentTaskHandle());
+                Serial.printf("[WEATHER_OLD]  req1 created\n");
+                Serial.flush();
+                g_weather_old_req_type = REQ_TIME;
+            }
             run_data->coactusUpdateFlag = 0x00;
         }
     }
     else if (2 == run_data->clock_page) // NULL后期可以是具体数据
     {
-        display_hardware_old(NULL, anim_type);
+        // 页面切换守护：仅在首次渲染或切换到此页面时刷新硬件信息
+        if (!weather_old_ui_initialized || last_old_clock_page != 2) {
+            display_hardware_old(NULL, anim_type);
+            weather_old_ui_initialized = true;
+        }
     }
-
-    delay(300);
+    last_old_clock_page = run_data->clock_page;
 }
 
 static void weather_background_task(AppController *sys,
@@ -288,6 +372,13 @@ static void weather_background_task(AppController *sys,
 static int weather_exit_callback(void *param)
 {
     weather_old_gui_del();
+
+    if (g_weather_old_req)
+    {
+        g_weather_old_req->orphaned = true;
+        g_weather_old_req = NULL;
+        g_weather_old_req_type = REQ_NONE;
+    }
 
     // 释放运行数据
     if (NULL != run_data)
@@ -304,30 +395,6 @@ static void weather_message_handle(const char *from, const char *to,
 {
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        Serial.print(GET_SYS_MILLIS());
-        Serial.print(F("----->weather_event_notification\n"));
-        int event_id = (int)message;
-        if (0 == run_data->clock_page && run_data->clock_page == event_id)
-        {
-            // 如果要改城市这里也需要修改
-            char api[128] = "";
-            snprintf(api, 128, ZHIXIN_WEATHER_API, cfg_data.weather_key.c_str(),
-                     cfg_data.cityname.c_str(), cfg_data.language.c_str());
-            Weather weather = getWeather(api);
-            // Weather weather = getWeather("https://api.seniverse.com/v3/weather/now.json?key=" +
-            //                              g_cfg.weather_key + "&location=" + g_cfg.cityname + "&language=" +
-            //                              g_cfg.language + "&unit=" + unit);
-            UpdateWeather(&weather, LV_SCR_LOAD_ANIM_NONE);
-        }
-        else if (1 == run_data->clock_page && run_data->clock_page == event_id)
-        {
-            long long timestamp = getTimestamp(TIME_API) + TIMEZERO_OFFSIZE; // nowapi时间API
-            UpdateTime_RTC(timestamp, LV_SCR_LOAD_ANIM_NONE);
-        }
-    }
-    break;
     case APP_MESSAGE_WIFI_AP:
     {
     }

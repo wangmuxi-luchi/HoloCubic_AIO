@@ -4,7 +4,7 @@
 #include "sys/app_controller.h"
 #include "network.h"
 #include "common.h"
-#include "ESP32FtpServer.h"
+#include <ESP32FtpServer.h>
 
 #define FILE_MANAGER_APP_NAME "File Manager"
 
@@ -38,6 +38,11 @@ static int file_maneger_init(AppController *sys)
     run_data->serverReflushPreMillis = 0;
     run_data->recvBuf = (uint8_t *)calloc(1, RECV_BUFFER_SIZE);
     run_data->sendBuf = (uint8_t *)calloc(1, SEND_BUFFER_SIZE);
+
+    APP_OBJ *app = sys->getAppByName(FILE_MANAGER_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 30;
+    }
     return 0;
 }
 
@@ -154,4 +159,3 @@ static void file_maneger_message_handle(const char *from, const char *to,
 APP_OBJ file_manager_app = {FILE_MANAGER_APP_NAME, &app_file_manager, "",
                             file_maneger_init, file_maneger_process, file_maneger_background_task,
                             file_maneger_exit_callback, file_maneger_message_handle};
-                            

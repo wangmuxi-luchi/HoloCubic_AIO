@@ -3,10 +3,11 @@
 #include "sys/app_controller.h"
 #include "common.h"
 #include "sys/time.h"
+#include "network_async.h"
 
 #define ANNIVERSARY_APP_NAME "Anniversary"
 #define MAX_ANNIVERSARY_CNT 2
-#define TIME_API "http://api.m.taobao.com/rest/api3.do?api=mtop.common.gettimestamp"
+#define TIME_API "https://acs.m.taobao.com/gw/mtop.common.getTimestamp/"
 
 bool tmfromString(const char *date_str, struct tm *date);
 
@@ -20,6 +21,7 @@ struct AN_Config
     struct tm current_date;
 };
 
+static long long get_timestamp(void);
 static long long get_timestamp(String url);
 
 static void write_config(AN_Config *cfg)
@@ -96,6 +98,7 @@ struct AnniversaryAppRunData
 
 static AN_Config cfg_data;
 static AnniversaryAppRunData *run_data = NULL;
+static HttpRequest *g_anniv_req = NULL;
 
 bool tmfromString(const char *date_str, struct tm *date)
 {
@@ -175,10 +178,11 @@ static int dateDiff(struct tm *date1, struct tm *date2)
 
 static void get_date_diff()
 {
-    time_t timep = run_data->preNetTimestamp / 1000;
+    long long timestamp = get_timestamp();
+    time_t timep = timestamp / 1000;
     struct tm *p_tm;
     // time(&timep);
-    p_tm = localtime(&timep);
+    p_tm = gmtime(&timep);
 
     cfg_data.current_date.tm_year = p_tm->tm_year + 1900;
     cfg_data.current_date.tm_mon = p_tm->tm_mon + 1;
@@ -195,6 +199,14 @@ static void date_update()
     anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]),
                                  run_data->anniversary_day_count,
                                  cfg_data.event_name[run_data->cur_anniversary].c_str());
+}
+
+static long long get_timestamp(void)
+{
+    // 使用本地的机器时钟
+    run_data->preNetTimestamp = run_data->preNetTimestamp + (GET_SYS_MILLIS() - run_data->preLocalTimestamp);
+    run_data->preLocalTimestamp = GET_SYS_MILLIS();
+    return run_data->preNetTimestamp;
 }
 
 static long long get_timestamp(String url)
@@ -214,8 +226,9 @@ static long long get_timestamp(String url)
         {
             String payload = http.getString();
             Serial.println(payload);
-            int time_index = (payload.indexOf("data")) + 12;
-            time = payload.substring(time_index, payload.length() - 3);
+            int time_index = payload.indexOf("\"t\":\"") + 5;
+            int time_end_index = payload.indexOf("\"", time_index);
+            time = payload.substring(time_index, time_end_index);
             // 以网络时间戳为准
             run_data->preNetTimestamp = atoll(time.c_str()) + run_data->errorNetTimestamp + TIMEZERO_OFFSIZE;
             run_data->preLocalTimestamp = GET_SYS_MILLIS();
@@ -247,6 +260,7 @@ static int anniversary_init(AppController *sys)
     run_data->preWeatherMillis = 0;
     run_data->preTimeMillis = 0;
     run_data->coactusUpdateFlag = 0x01;
+    anniversary_app.loop_interval_ms = 60000; // 每分钟检查一次日期变化
     Serial.printf("anniversary init successful\n");
     return 0;
 }
@@ -254,13 +268,41 @@ static int anniversary_init(AppController *sys)
 static void anniversary_process(AppController *sys,
                                 const ImuAction *act_info)
 {
+    static bool anniversary_ui_initialized = false;
+    static int last_cur_anniversary = -1;
+    static int last_day_count = -9999;
+
     lv_scr_load_anim_t anim_type = LV_SCR_LOAD_ANIM_NONE;
     if (RETURN == act_info->active)
     {
         sys->app_exit(); // 退出APP
         return;
     }
-    else if (TURN_RIGHT == act_info->active)
+
+    if (g_anniv_req && g_anniv_req->done)
+    {
+        __sync_synchronize();
+        String payload = String(g_anniv_req->response);
+        if (g_anniv_req->http_code > 0 && payload.length() > 0)
+        {
+            Serial.println(payload);
+            int time_index = payload.indexOf("\"t\":\"") + 5;
+            int time_end_index = payload.indexOf("\"", time_index);
+            String time = payload.substring(time_index, time_end_index);
+            run_data->preNetTimestamp = atoll(time.c_str()) + run_data->errorNetTimestamp + TIMEZERO_OFFSIZE;
+            run_data->preLocalTimestamp = GET_SYS_MILLIS();
+        }
+        else
+        {
+            Serial.printf("[HTTP] GET time failed\n");
+            run_data->preNetTimestamp = run_data->preNetTimestamp + (GET_SYS_MILLIS() - run_data->preLocalTimestamp);
+            run_data->preLocalTimestamp = GET_SYS_MILLIS();
+        }
+        vPortFree(g_anniv_req);
+        g_anniv_req = NULL;
+    }
+
+    if (TURN_RIGHT == act_info->active)
     {
         anim_type = LV_SCR_LOAD_ANIM_MOVE_RIGHT;
         run_data->cur_anniversary = (run_data->cur_anniversary + 1) % MAX_ANNIVERSARY_CNT;
@@ -275,8 +317,10 @@ static void anniversary_process(AppController *sys,
         // 启动时先用持久化配置中的日期
         run_data->anniversary_day_count = dateDiff(&(cfg_data.current_date), &(cfg_data.target_date[run_data->cur_anniversary]));
         // 尝试同步网络上的时钟
-        sys->send_to(ANNIVERSARY_APP_NAME, CTRL_NAME,
-                     APP_MESSAGE_WIFI_CONN, NULL, NULL);
+        if (g_anniv_req == NULL)
+        {
+            g_anniv_req = http_get_async(TIME_API, xTaskGetCurrentTaskHandle());
+        }
         run_data->coactusUpdateFlag = 0x00;
         write_config(&cfg_data);
     }
@@ -290,14 +334,25 @@ static void anniversary_process(AppController *sys,
     // Serial.printf("%d %d %d %d", cfg_data.target_date[run_data->cur_anniversary].tm_year,  cfg_data.target_date[run_data->cur_anniversary].tm_mon,  cfg_data.target_date[run_data->cur_anniversary].tm_mday,  cfg_data.target_date[run_data->cur_anniversary].tm_wday);
     // Serial.println(F(""));
     // Serial.println(F(cfg_data.event_name[run_data->cur_anniversary].c_str()));
-    display_anniversary("anniversary", anim_type, &(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
-    anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+    // 只有在页面首次加载或切换纪念日时才重建 UI
+    if (!anniversary_ui_initialized || last_cur_anniversary != run_data->cur_anniversary)
+    {
+        display_anniversary("anniversary", anim_type, &(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+        last_cur_anniversary = run_data->cur_anniversary;
+        anniversary_ui_initialized = true;
+    }
+
+    // 只有在日期变化（天数变化）时才更新显示
+    if (last_day_count != run_data->anniversary_day_count)
+    {
+        anniversary_gui_display_date(&(cfg_data.target_date[run_data->cur_anniversary]), run_data->anniversary_day_count, cfg_data.event_name[run_data->cur_anniversary].c_str());
+        last_day_count = run_data->anniversary_day_count;
+    }
     // 发送请求。如果是wifi相关的消息，当请求完成后自动会调用 anniversary_message_handle 函数
     // sys->send_to(ANNIVERSARY_APP_NAME, CTRL_NAME,
     //              APP_MESSAGE_WIFI_CONN, (void *)run_data->val1, NULL);
 
     // 程序需要时可以适当加延时
-    delay(300);
 }
 
 static void anniversary_background_task(AppController *sys,
@@ -311,6 +366,12 @@ static int anniversary_exit_callback(void *param)
 {
     // 释放资源
     anniversary_gui_del();
+
+    if (g_anniv_req)
+    {
+        g_anniv_req->orphaned = true;
+        g_anniv_req = NULL;
+    }
 
     // 释放运行数据
     if (NULL != run_data)
@@ -328,14 +389,6 @@ static void anniversary_message_handle(const char *from, const char *to,
     // 目前主要是wifi开关类事件（用于功耗控制）
     switch (type)
     {
-    case APP_MESSAGE_WIFI_CONN:
-    {
-        // todo
-        Serial.print(F("ntp update.\n"));
-
-        long long timestamp = get_timestamp(TIME_API); // nowapi时间API
-    }
-    break;
     case APP_MESSAGE_WIFI_AP:
     {
         // todo

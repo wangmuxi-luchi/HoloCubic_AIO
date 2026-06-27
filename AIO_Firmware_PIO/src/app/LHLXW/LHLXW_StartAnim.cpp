@@ -22,7 +22,7 @@ static void anim_x_cb4(lv_obj_t *var,int32_t v){
 }
 
 void startLog(lv_obj_t *ym){
-    
+    printf("[StartAnim] startLog begin, creating screen...\n"); fflush(stdout);
     /* 创建一个log anim屏幕,并切换到此屏幕*/
     lv_obj_t *LOG_SCR = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(LOG_SCR,lv_color_hex(0),LV_STATE_DEFAULT);//将此活动页面背景颜色设置为黑色
@@ -113,20 +113,27 @@ void startLog(lv_obj_t *ym){
     
     /* 等待动画结束 */
     /* 也可以用lv_anim_set_ready_cb函数实现 */
+    printf("[StartAnim] waiting 2000ms for animations...\n"); fflush(stdout);
     for(uint16_t i=0;i<2000;i++){
         lv_task_handler();
         delay(1);
+        if (i % 200 == 0) { printf("[StartAnim]   progress: %d/2000\n", i); fflush(stdout); }
     }
+    printf("[StartAnim] 2000ms done, transitioning to main screen...\n"); fflush(stdout);
     /* 丝滑过度到表情菜单，同时删除旧屏幕(这里不用此函数自带的删除，等执行完后手动删除) */
     lv_scr_load_anim(ym, LV_SCR_LOAD_ANIM_OUT_BOTTOM, 573, 0, false);//上翻动画，切换到此页面
 
     /* 这里加延时是为了防止动画执行完成前就删除动画对象导致系统出错 */
+    printf("[StartAnim] waiting 573ms for transition...\n"); fflush(stdout);
     for(uint16_t i=0;i<573;i++){
         lv_task_handler();
         delay(1);
+        if (i % 100 == 0) { printf("[StartAnim]   transition progress: %d/573\n", i); fflush(stdout); }
     }
+    printf("[StartAnim] cleaning up LOG_SCR...\n"); fflush(stdout);
 
     /* 删除启动log动画所有部件 */
     lv_obj_clean(LOG_SCR);
     lv_obj_del(LOG_SCR);
+    printf("[StartAnim] startLog done\n"); fflush(stdout);
 }

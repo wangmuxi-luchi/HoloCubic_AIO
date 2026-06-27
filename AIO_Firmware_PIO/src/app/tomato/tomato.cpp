@@ -30,6 +30,9 @@ struct TomatoAppForeverData
 
 static bool hadOpened = false;
 
+static bool tomato_ui_initialized = false;
+static unsigned long last_tomato_display_ms = 0;
+
 // 保存APP运行时的参数信息，理论上关闭APP时推荐在 xxx_exit_callback 中释放掉
 static TomatoAppRunData *run_data = NULL;
 
@@ -51,7 +54,6 @@ static int tomato_init(AppController *sys)
     run_data->rgb_fast_update = 0;
     run_data->switch_count = 0;
     run_data->lastAct = UNKNOWN;
-    // run_data->count_down_init = 0;
 
     run_data->rgb_cfg.mode = 1;
     run_data->rgb_cfg.min_value_0 = 1;
@@ -74,6 +76,14 @@ static int tomato_init(AppController *sys)
                              run_data->rgb_cfg.step_0, run_data->rgb_cfg.step_1, run_data->rgb_cfg.step_2,
                              run_data->rgb_cfg.min_brightness, run_data->rgb_cfg.max_brightness,
                              run_data->rgb_cfg.brightness_step, run_data->rgb_cfg.time};
+    APP_OBJ *app = sys->getAppByName(TOMATO_APP_NAME);
+    if (app) {
+        app->loop_interval_ms = 1000;
+        app->fixed_fps_mode = true;
+        app->last_frame_ms = GET_SYS_MILLIS();
+    }
+    tomato_ui_initialized = false;
+    last_tomato_display_ms = 0;
     return 0;
 }
 static void time_switch()
@@ -220,7 +230,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
     static int count_down_reset = ON;
     if (!hadOpened)
     {
-        delay(750);
         run_data->time_start = millis();
         hadOpened = true;
     }
@@ -307,7 +316,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
                         if (run_data->time_mode >= -1 && run_data->time_mode <= 2)
                         {
                             run_data->t_start.minute = 5;
-                            delay(50);
                             run_data->time_start = millis();
                         }
                     }
@@ -318,7 +326,6 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
                         if (run_data->time_mode >= -1 && run_data->time_mode <= 2)
                         {
                             run_data->t_start.minute = 45;
-                            delay(50);
                             run_data->time_start = millis();
                         }
                     }
@@ -360,8 +367,12 @@ static void tomato_process(AppController *sys, const ImuAction *act_info)
         run_data->t.minute = run_data->time_ms / 60 / 1000;
     }
     // Serial.print(run_data->rgb_fast);
-    display_tomato(run_data->t, run_data->time_mode);
-    delay(100);
+    // 时间间隔守护：番茄钟只需秒级刷新，避免每帧调用 lv_label_set_text_fmt 触发 LVGL 自激振荡
+    if (!tomato_ui_initialized || GET_SYS_MILLIS() - last_tomato_display_ms >= 1000) {
+        last_tomato_display_ms = GET_SYS_MILLIS();
+        display_tomato(run_data->t, run_data->time_mode);
+        tomato_ui_initialized = true;
+    }
 }
 
 static int tomato_exit_callback(void *param)
